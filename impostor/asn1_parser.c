@@ -3,60 +3,73 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-// Base Types
-#define ASN1_TYPE_EOC 0x00 // End of Content
-#define ASN1_TYPE_BOOLEAN 0x01
-#define ASN1_TYPE_INTEGER 0x02
-#define ASN1_TYPE_BIT_STRING 0x03
-#define ASN1_TYPE_OCTET_STRING 0x04
-#define ASN1_TYPE_NULL 0x05
-#define ASN1_TYPE_OBJECT_ID 0x06
+typedef struct tag_types {
+    char *tag_name;
+    uint8_t tag_value;
+} tag_types;
 
-#define ASN1_TYPE_OBJECT_DESCRIPTOR 0x07
-#define ASN1_TYPE_REAL 0x09
-#define ASN1_TYPE_RELATIVE_OID 0x0d
-#define ASN1_TYPE_UTC_TIME 0x17
-#define ASN1_TYPE_GENERALIZED_TIME 0x18
+tag_types tags[] = {
+    // Base Types
+    {"ASN1_TYPE_EOC",                   0x00},
+    {"ASN1_TYPE_BOOLEAN",               0x01},
+    {"ASN1_TYPE_INTEGER",               0x02},
+    {"ASN1_TYPE_BIT_STRING",            0x03},
+    {"ASN1_TYPE_OCTET_STRING",          0x04},
+    {"ASN1_TYPE_NULL",                  0x05},
+    {"ASN1_TYPE_OBJECT_ID",             0x06},
 
-// Strings Types
-#define ASN1_TYPE_UTF8_STRING 0x0c
-#define ASN1_TYPE_UTF8_NUMERIC_STRING 0x12
-#define ASN1_TYPE_PRINTABLE_STRING 0x13
-#define ASN1_TYPE_T61_STRING 0x14
-#define ASN1_TYPE_VIDEOTEX_STRING 0x15
-#define ASN1_TYPE_IA5_STRING 0x16
-#define ASN1_TYPE_GRAPHIC_STRING 0x19
-#define ASN1_TYPE_VISIBLE_STRING 0x1a
-#define ASN1_TYPE_GENERAL_STRING 0x1b
-#define ASN1_TYPE_UNIVERSAL_STRING 0x1c
-#define ASN1_TYPE_UNICODE_STRING 0x1e
-#define ASN1_TYPE_CHARACTER_STRING 0x3d
+    {"ASN1_TYPE_OBJECT_DESCRIPTOR",     0x07},
+    {"ASN1_TYPE_REAL",                  0x09},
+    {"ASN1_TYPE_RELATIVE_OID",          0x0d},
+    {"ASN1_TYPE_UTC_TIME",              0x17},
+    {"ASN1_TYPE_GENERALIZED_TIME",      0x18},
 
-// Construct Types
-#define ASN1_TYPE_SEQUENCE 0x30
-#define ASN1_TYPE_SET 0x31
-#define ASN1_TYPE_ENUMERATED 0x0a
-#define ASN1_TYPE_EXTERNAL 0x28
-#define ASN1_TYPE_EMBEDDED_PDV 0x2b
+    // Strings Types
+    {"ASN1_TYPE_UTF8_STRING",           0x0c},
+    {"ASN1_TYPE_UTF8_NUMERIC_STRING",   0x12},
+    {"ASN1_TYPE_PRINTABLE_STRING",      0x13},
+    {"ASN1_TYPE_T61_STRING",            0x14},
+    {"ASN1_TYPE_VIDEOTEX_STRING",       0x15},
+    {"ASN1_TYPE_IA5_STRING",            0x16},
+    {"ASN1_TYPE_GRAPHIC_STRING",        0x19},
+    {"ASN1_TYPE_VISIBLE_STRING",        0x1a},
+    {"ASN1_TYPE_GENERAL_STRING",        0x1b},
+    {"ASN1_TYPE_UNIVERSAL_STRING",      0x1c},
+    {"ASN1_TYPE_UNICODE_STRING",        0x1e},
+    {"ASN1_TYPE_CHARACTER_STRING",      0x3d},
 
-// Tag GSSAPI
-#define ASN1_TYPE_GSSAPI 0x60
+    // Construct Types
+    {"ASN1_TYPE_SEQUENCE",              0x30},
+    {"ASN1_TYPE_SET",                   0x31},
+    {"ASN1_TYPE_ENUMERATED",            0x0a},
+    {"ASN1_TYPE_EXTERNAL",              0x28},
+    {"ASN1_TYPE_EMBEDDED_PDV",          0x2b},
 
-// Tags NegotiationToken
-#define ASN1_TYPE_SPNEGO_NEGTOKENINIT 0xa0
-#define ASN1_TYPE_SPNEGO_NEGTOKENRESP 0xa1
+    // GSSAPI Tag
+    {"ASN1_TYPE_GSSAPI",                0x60},
 
-// Tags NegTokenInit
-#define ASN1_TYPE_SPNEGO_MECHTYPES 0xa0
-#define ASN1_TYPE_SPNEGO_REQFLAGS 0xa1
-#define ASN1_TYPE_SPNEGO_MECHTOKEN 0xa2
-#define ASN1_TYPE_SPNEGO_MECHLISTMIC 0xa3
+    //Tags NegotiationToken
+    {"ASN1_TYPE_SPNEGO_NEGTOKENINIT",   0xa0},
+    {"ASN1_TYPE_SPNEGO_NEGTOKENRESP",   0xa1},
 
-// Tags NegTokenResp
-#define ASN1_TYPE_SPNEGO_NEGSTATE 0xa0
-#define ASN1_TYPE_SPNEGO_SUPPORTEDMECH 0xa1
-#define ASN1_TYPE_SPNEGO_RESPONSETOKEN 0xa2
-#define ASN1_TYPE_SPNEGO_MECHLISTMIC 0xa3
+    //Tags NegTokenInit
+    {"ASN1_TYPE_SPNEGO_MECHTYPES",      0xa0},
+    {"ASN1_TYPE_SPNEGO_REQFLAGS",       0xa1},
+    {"ASN1_TYPE_SPNEGO_MECHTOKEN",      0xa2},
+    
+    // Tags NegTokenResp
+    {"ASN1_TYPE_SPNEGO_NEGSTATE",       0xa0},
+    {"ASN1_TYPE_SPNEGO_SUPPORTEDMECH",  0xa1},
+    {"ASN1_TYPE_SPNEGO_RESPONSETOKEN",  0xa2},
+    {"ASN1_TYPE_SPNEGO_MECHLISTMIC",    0xa3},
+};
+
+uint8_t leaf_tags[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 ,12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23};
+uint8_t root_tags[] = {24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38};
+
+/**************************************************/
+//                    CONSTANTS
+/*************************************************/
 
 /* Mask per capire dal bit più significativo del primo byte se la len >= 128 */
 #define PARSER_CHECK_LEN_BYTE_MASK 0x80             // 1000 0000
@@ -105,8 +118,9 @@
 #define PARSER_ERROR_STACK_ENTRY_OBJ_IS_NULL 0x80000017
 #define PARSER_ERROR_STACK_PUSH_ENTRY_IS_NULL 0x80000018
 
+#define PARSER_ERROR_INVALID_TAG 0x80000019
 
-typedef uint32_t asn1_parser_error;
+typedef int32_t asn1_parser_error;
 
 /**************************************************/
 //                    Struct
@@ -400,6 +414,7 @@ typedef struct parser_stack_entry {
     size_t effective_len;  
     size_t offset;  
     size_t num_bytes_len;
+    uint8_t is_base;
 } parser_stack_entry;
 
 typedef struct parser_stack {
@@ -417,6 +432,7 @@ parser_stack_entry * new_parser_stack_entry() {
     entry->obj = NULL;
     entry->ret_len = 0;
     entry->offset = 0;
+    entry->is_base = 0;
     entry->effective_len = 0;
     entry->num_bytes_len = 0;
 
@@ -443,8 +459,8 @@ parser_stack * new_parser_stack() {
 }
 
 uint8_t parser_stack_is_empty(parser_stack *stack) {
-    if (!stack) return 0;
-    return stack->len > 0 ? 1 : 0;
+    if (!stack) return 1;
+    return stack->len > 0 ? 0 : 1;
 }
 
 /** Non Libera obj e parent, ma annulla i puntatori. Perchè
@@ -556,12 +572,17 @@ asn1_parser_error parser_stack_top(parser_stack *stack, parser_stack_entry **out
 /**************************************************/
 
 uint8_t is_base_type(uint8_t type) {
-    return (type == ASN1_TYPE_INTEGER || type == ASN1_TYPE_BOOLEAN
-        || type == ASN1_TYPE_BIT_STRING || type == ASN1_TYPE_OCTET_STRING
-        || type == ASN1_TYPE_NULL || type == ASN1_TYPE_OBJECT_ID 
-        || type == ASN1_TYPE_UTF8_STRING || type == ASN1_TYPE_UNICODE_STRING
-        || type == ASN1_TYPE_IA5_STRING || type == ASN1_TYPE_PRINTABLE_STRING) ? 1: 0;
+    for (size_t i = 0; i < sizeof(leaf_tags); i++) {
+        if (type == tags[leaf_tags[i]].tag_value) return 1;
+    }
+    return 0;
+}
 
+uint8_t is_valid_type(uint8_t type) {
+    for (size_t i = 0; i < sizeof(tags)/sizeof(tags[0]); i++) {
+        if (type == tags[i].tag_value) return 1;
+    }
+    return 0;
 }
 
 /**************************************************/
@@ -586,6 +607,12 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
     }
 
     uint8_t type = *buffer;
+
+    if (!is_valid_type(type)) {
+        free_asn1_obj(&obj);
+        return PARSER_ERROR_INVALID_TAG;
+    }
+
     obj->type = type;
     obj->entry = NULL;
 
@@ -606,14 +633,14 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
     // NON è una leaf. Creiamo stack, pushamo dentro entry.
     parser_stack *stack = new_parser_stack();
     if (!stack) {
-        free_asn1_obj(obj);
+        free_asn1_obj(&obj);
         return PARSER_ERROR_STACK_ALLOCATION;
     }
 
     parser_stack_entry *stack_entry = new_parser_stack_entry();
     if (!stack_entry) {
         free_parser_stack(&stack);
-        free_asn1_obj(obj);
+        free_asn1_obj(&obj);
         return PARSER_ERROR_STACK_ENTRY_ALLOCATION;
     }
 
@@ -623,11 +650,12 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
     stack_entry->num_bytes_len = num_bytes;
     stack_entry->offset = 0;
     stack_entry->ret_len = 0;
+    stack_entry->is_base = 1;
 
     res = parser_stack_push(stack, stack_entry);
     if (res < PARSER_OK) {
         free_parser_stack(&stack);
-        free_asn1_obj(obj);
+        free_asn1_obj(&obj);
         return res;
     }
 
@@ -636,35 +664,63 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
         res = parser_stack_top(stack, &tmp_stack_entry);
         if (res < PARSER_OK) {
             free_parser_stack(&stack);
-            free_asn1_obj(obj);
+            free_asn1_obj(&obj);
             return res;
         }
 
-        // Controllo per vedere se l'onj dell'entry dello stack è NULL
+        // Controllo per vedere se l'obj dell'entry dello stack è NULL
         if (!tmp_stack_entry->obj) {
             free_parser_stack(&stack);
-            free_asn1_obj(obj);
+            free_asn1_obj(&obj);
             return PARSER_ERROR_STACK_ENTRY_OBJ_IS_NULL;
         }
 
+        printf("----------------------\n");
+        printf("TOP dallo Stack:\n Tag: 0x%x\n", tmp_stack_entry->obj->type);
+
         // E' di tipo "root"
         if (!is_base_type(tmp_stack_entry->obj->type)) {
-            
-            if (tmp_stack_entry->ret_len == (tmp_stack_entry->effective_len - 1 - tmp_stack_entry->num_bytes_len)) {
+            printf("E' di tipo \"root\".\n");
+            printf("effective_len: %d\n", tmp_stack_entry->effective_len);
+            printf("num_bytes_len: %d\n", tmp_stack_entry->num_bytes_len);
+            printf("offset: %d\n", tmp_stack_entry->offset);
+            printf("ret_len: %d\n", tmp_stack_entry->ret_len);
+
+            if (tmp_stack_entry->ret_len >= (tmp_stack_entry->effective_len - 1 - tmp_stack_entry->num_bytes_len)) {
+                size_t temp_eff_len = tmp_stack_entry->effective_len;
                 res = parser_stack_pop(stack, NULL);
                 if (res < PARSER_OK) {
                     free_parser_stack(&stack);
-                    free_asn1_obj(obj);
+                    free_asn1_obj(&obj);
                     return res;
                 }
+                
+                // Modifico ret_len parent
+                if (!parser_stack_is_empty(stack)) {
+                    parser_stack_entry *top_stack_entry;
+                    res = parser_stack_top(stack, &top_stack_entry);
+                    if (res < PARSER_OK) {
+                        free_parser_stack(&stack);
+                        free_asn1_obj(&obj);
+                        return res;
+                    }
+                    top_stack_entry->ret_len += temp_eff_len;
+                }
+
             }
             else {
-                type = buffer + tmp_stack_entry->offset + 1 + tmp_stack_entry->num_bytes_len + tmp_stack_entry->ret_len;
+                type = *(buffer + tmp_stack_entry->offset + 1 + tmp_stack_entry->num_bytes_len + tmp_stack_entry->ret_len);
+                
+                if (!is_valid_type(type)) {
+                    free_parser_stack(&stack);
+                    free_asn1_obj(&obj);
+                    return PARSER_ERROR_INVALID_TAG;
+                }
 
-                asn1_obj * tmp_obj = new_asn1_obj;
+                asn1_obj * tmp_obj = new_asn1_obj();
                 if (!tmp_obj) {
                     free_parser_stack(&stack);
-                    free_asn1_obj(obj);
+                    free_asn1_obj(&obj);
                     return PARSER_ERROR_ALLOC_NEW_ASN1_OBJECT;
                 }
 
@@ -674,22 +730,113 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
                 parser_stack_entry *new_tmp_stack_entry = new_parser_stack_entry();
                 if (!new_tmp_stack_entry) {
                     free_parser_stack(&stack);
-                    free_asn1_obj(obj);
+                    free_asn1_obj(&obj);
+                    free_asn1_obj(&tmp_obj);
                     return PARSER_ERROR_STACK_ENTRY_ALLOCATION;
                 }
+                
+                res = parse_length(
+                        buffer + tmp_stack_entry->offset + 1 + tmp_stack_entry->num_bytes_len + 1 + tmp_stack_entry->ret_len,
+                        &act_len, &num_bytes
+                );
 
-                // TODO: estrarre lunghezze
-                new_tmp_stack_entry->
+                if (res < PARSER_OK) {
+                    free_parser_stack(&stack);
+                    free_asn1_obj(&obj);
+                    free_asn1_obj(&tmp_obj);
+                    free_parser_stack_entry(&new_tmp_stack_entry);
+                    return res;
+                }
 
+                new_tmp_stack_entry->obj = tmp_obj;
+                new_tmp_stack_entry->parent = tmp_stack_entry->obj;
+                new_tmp_stack_entry->offset = tmp_stack_entry->offset 
+                                                + 1 + tmp_stack_entry->num_bytes_len 
+                                                + tmp_stack_entry->ret_len;
+                new_tmp_stack_entry->num_bytes_len = num_bytes;
+                new_tmp_stack_entry->effective_len = 1 + num_bytes + act_len;
+                new_tmp_stack_entry->ret_len = 0;
+
+                // Appendiamo alla lista del padre
+                if (!tmp_stack_entry->is_base) {
+                    res = append_asn1_obj_list(&tmp_stack_entry->parent, tmp_obj);
+                    if (res < PARSER_OK) {
+                        free_parser_stack(&stack);
+                        free_asn1_obj(&obj);
+                        free_asn1_obj(&tmp_obj);
+                        free_parser_stack_entry(&new_tmp_stack_entry);
+                        return res;
+                    }
+                }
+
+                // Push nello stack della entry
+                res = parser_stack_push(stack, new_tmp_stack_entry);
+                if (res < PARSER_OK) {
+                    free_parser_stack(&stack);
+                    free_asn1_obj(&obj);
+                    free_parser_stack_entry(&new_tmp_stack_entry);
+                    return res;
+                }
             }
         }
 
         // E' di tipo "leaf"
         else {
+            printf("E' di tipo \"leaf\".\n");
+            printf("effective_len: %d\n", tmp_stack_entry->effective_len);
+            printf("num_bytes_len: %d\n", tmp_stack_entry->num_bytes_len);
+            printf("offset: %d\n", tmp_stack_entry->offset);
+            printf("ret_len: %d\n", tmp_stack_entry->ret_len);
+            asn1_entry *obj_entry;
+            res = parse_blob(buffer + 
+                                tmp_stack_entry->offset +
+                                1 + tmp_stack_entry->num_bytes_len +
+                                tmp_stack_entry->ret_len,
+                            tmp_stack_entry->effective_len - 1 - tmp_stack_entry->num_bytes_len, 
+                            &obj_entry);
+            if (!obj_entry) {
+                free_parser_stack(&stack);
+                free_asn1_obj(&obj);
+                return PARSER_ERROR_ALLOC_NEW_ASN1_ENTRY;
+            }
 
+            tmp_stack_entry->obj->entry = obj_entry;
+            // append in parent
+            res = append_asn1_obj_list(&tmp_stack_entry->parent, tmp_stack_entry->obj);
+            if (res < PARSER_OK) {
+                free_parser_stack(&stack);
+                free_asn1_obj(&obj);
+                free_asn1_entry(&obj_entry);
+                return res;
+            }
+
+            size_t ret_len_aux = tmp_stack_entry->effective_len;
+
+            // Pop della leaf
+            res = parser_stack_pop(stack, NULL);
+            if (res < PARSER_OK) {
+                free_parser_stack(&stack);
+                free_asn1_obj(&obj);
+                return res;
+            }
+
+            // Modifico ret_len parent
+            parser_stack_entry *top_stack_entry;
+            res = parser_stack_top(stack, &top_stack_entry);
+            if (res < PARSER_OK) {
+                free_parser_stack(&stack);
+                free_asn1_obj(&obj);
+                return res;
+            }
+
+            // Modifico ret_len parent
+            top_stack_entry->ret_len += ret_len_aux;
         }
     }
 
+    *obj_out = obj;
+    free_parser_stack(&stack);
+    return PARSER_OK;
 }
 
 
@@ -706,12 +853,23 @@ int main() {
     //printf("%d\n", sizeof(size_t));
     //printf("%d\n", get_length(buffer+1, 2));
     
-    uint64_t b, o;
-    int32_t r = parse_length(buffer + 1, &b, &o);
+    //uint64_t b, o;
+    //int32_t r = parse_length(buffer + 1, &b, &o);
 
-    printf("Return: 0x%x\n", r);
+    //printf("Return: 0x%x\n", r);
 
-    printf("%lld, %lld\n", b,o);
+    //printf("%lld, %lld\n", b,o);
+    asn1_obj *out;
+    asn1_parser_error err = parse(buffer, 37, &out);
+
+    if (err < PARSER_OK) {
+        printf("Error: 0x%x\n", err);
+    }
+
+    //printf("0x%x, %d\n", out->type, out->len);
+
+
+
     
 
 
