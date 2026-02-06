@@ -1,3 +1,14 @@
+/* asn1_parser -- Un implementazione di un parser ASN.1 DER Encode.
+ * 
+ * Luca Vinci <luca9vinci at gmail dot com>
+ * 
+ * Parser realizzato con l'obiettivo di scrivre un server SMB1 
+ * per l'intercettazione di hash NTLM.
+ * 
+ * Il parser è minimale e realizza un albero della struttura
+ * ASN.1, con dati grezzi che necessitano di un decoding.
+ */
+
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -1125,16 +1136,18 @@ int main() {
                                0x00,0x41,0x00,0x4c,0x00,0x00,0x00,0x00,0x00};
     
     asn1_obj *out;
-    asn1_parser_error err = parse(buffer, 37, &out);
+    asn1_parser_error err = parse(buffer2, 249, &out);
 
     if (err < PARSER_OK) {
         printf("Error: 0x%x\n", err);
         return 1;
     }
 
-    print_tree(out);
+    //print_tree(out);
 
     free_asn1_obj(&out);
+
+    printf("PARSER_OK\n");
 
     return 0;
 }
