@@ -1,12 +1,12 @@
-/* asn1_parser -- Un implementazione di un parser ASN.1 DER Encode.
- * 
+/* asn1_parser -- An implementation of an ASN.1 DER parser.
+ *
  * Luca Vinci <luca9vinci at gmail dot com>
- * 
- * Parser realizzato con l'obiettivo di scrivre un server SMB1 
- * per l'intercettazione di hash NTLM.
- * 
- * Il parser è minimale e realizza un albero della struttura
- * ASN.1, con dati grezzi che necessitano di un decoding.
+ *
+ * Parser developed with the goal of writing an SMB1 server
+ * for intercepting NTLM hashes.
+ *
+ * The parser is minimal and builds a tree representing the
+ * ASN.1 structure, with raw data that requires decoding.
  */
 
 #include <stdio.h>
@@ -15,18 +15,19 @@
 #include <stdlib.h>
 
 /**************************************************/
-//                  CONSTANTS
+//                   CONSTANTS
 /*************************************************/
 
-/* Mask per capire dal bit più significativo del primo byte se la len >= 128 */
+/* Mask to determine from the most significant bit of the first byte whether the length is >= 128 */
 #define PARSER_CHECK_LEN_BYTE_MASK              0x80         // 1000 0000
 #define PARSER_EXTRACT_LEN_FROM_BYTES_MASK      0x7F         // 0111 1111
 
-/* Dimesioni per lunghezza TLV */
+/* Size for TLV length */
+
 #define PARSER_MAX_LEN_LEN_BYTES                8             // 8 bytes
 #define PARSER_MAX_LEN_VALUE_BYTES              127           // 127 
 
-/* Dimesioni di inizializzazione e limiti massimi */
+/* Initialization sizes and maximum limits */
 #define PARSER_INIT_DIM_LIST_ASN1_OBJ           10
 #define PARSER_MAX_DIM_LIST_ASN1_OBJ            400
 #define PARSER_MAX_ENTRY_VALUE_LEN              (4 * 1024)     // 4 KB
@@ -173,9 +174,9 @@ typedef uint8_t asn1_type_t;
 #define ROOT_NODE 0x01
 
 /**
- * Struttura per la gestione dei tipi. Con relativo nome, limite, tipo nodo (root o leaf)
- * utile per la creazione dell'albero in fase di parsing, e errore eventuale per 
- * superamento limite.
+ * Structure for type handling. Includes the associated name, limit, node type
+ * (root or leaf) useful for building the tree during parsing, and a possible
+ * error in case the limit is exceeded.
  */
 typedef struct types_info {
     asn1_type_t type;
@@ -185,7 +186,7 @@ typedef struct types_info {
     asn1_parser_error err;
 } types_info;
 
-// "Tabella" dei tipi. Array di types_info.
+/* "Table" of types. Array of types_info. */
 const types_info tags[] = {
     // Base Types
     {ASN1_TYPE_EOC,                     "ASN1_TYPE_EOC",                   PARSER_MAX_ASN1_EOC_SIZE,                0, PARSER_ERROR_MAX_ASN1_EOC_SIZE},
@@ -196,7 +197,7 @@ const types_info tags[] = {
     {ASN1_TYPE_NULL,                    "ASN1_TYPE_NULL",                  PARSER_MAX_ASN1_NULL_SIZE,               0, PARSER_ERROR_MAX_ASN1_NULL_SIZE},
     {ASN1_TYPE_OBJECT_ID,               "ASN1_TYPE_OBJECT_ID",             PARSER_MAX_ASN1_OID,                     0, PARSER_ERROR_MAX_ASN1_OID_SIZE},
 
-    {ASN1_TYPE_OBJECT_DESCRIPTOR,       "ASN1_TYPE_OBJECT_DESCRIPTOR",     PARSER_MAX_ASN1_STRING_SIZE,             0, PARSER_ERROR_MAX_ASN1_STRING_SIZE},  // Contiene solo caratteri ASCII leggibili.
+    {ASN1_TYPE_OBJECT_DESCRIPTOR,       "ASN1_TYPE_OBJECT_DESCRIPTOR",     PARSER_MAX_ASN1_STRING_SIZE,             0, PARSER_ERROR_MAX_ASN1_STRING_SIZE},  // Contains only readable ASCII characters.
     {ASN1_TYPE_REAL,                    "ASN1_TYPE_REAL",                  PARSER_MAX_ASN1_NUMERIC_SIZE,            0, PARSER_ERROR_MAX_ASN1_NUMERIC_SIZE},
     {ASN1_TYPE_RELATIVE_OID,            "ASN1_TYPE_RELATIVE_OID",          PARSER_MAX_ASN1_OID,                     0, PARSER_ERROR_MAX_ASN1_OID_SIZE},
     {ASN1_TYPE_UTC_TIME,                "ASN1_TYPE_UTC_TIME",              PARSER_MAX_ASN1_UTC_TIME_SIZE,           0, PARSER_ERROR_MAX_ASN1_UTC_TIME_SIZE},
@@ -248,14 +249,18 @@ const types_info tags[] = {
 //                    Struct
 /**************************************************/
 
-// Eventuale valore del nodo ASN.1 nell'albero ASN.1 
-//risualtato del parsing.
+/* 
+ * Possible value of the ASN.1 node in the ASN.1 tree
+ * resulting from the parsing.
+ */
 typedef struct asn1_entry {
     size_t len;
     uint8_t *value;
 } asn1_entry;
 
-// Nodo dell'albero ASN.1 
+/*
+ * Node of the ASN.1 tree
+ */
 typedef struct asn1_obj {
     asn1_type_t type;
     struct asn1_entry *entry;
@@ -270,8 +275,8 @@ typedef struct asn1_obj {
 /**************************************************/
 
 /**
- * Funzione di utility per ottenere, dato un type, la sua entry
- * nella tabella tags.
+ * Utility function to get, given a type, its entry
+ * in the tags table.
  */
 asn1_parser_error get_type_info_by_type(asn1_type_t type, const types_info **out) {
     if (!out) return PARSER_ERROR_INVALID_ARG;
@@ -285,8 +290,8 @@ asn1_parser_error get_type_info_by_type(asn1_type_t type, const types_info **out
 }
 
 /**
- * Funzione di utility per determinare se un type è di tipo "root"
- * nell'albero ASN.1.
+ * Utility function to determine if a type is of "root" type
+ * in the ASN.1 tree.
  */
 asn1_parser_error is_root_node(asn1_type_t type, uint8_t *is_root) {
     if (!is_root) return PARSER_ERROR_INVALID_ARG;
@@ -307,18 +312,19 @@ uint8_t is_valid_type(asn1_type_t type) {
 }
 
 /**
- * Funzione che verifica se una lunghezza, dato un offset e una lunghezza massima
- * del blob, è sicura. Nel senso che verifica che non sia maggiore della lunghezza massima,
- * partendo da un offset. Verifica inoltre che l'offset non sia maggiore di max_len
- * per un controllo più safe.
+ * Function that checks if a length, given an offset and a maximum
+ * length of the blob, is safe. It verifies that it does not exceed
+ * the maximum length starting from the offset. It also checks that
+ * the offset is not greater than max_len for a safer validation.
  */
 uint8_t is_safe_asn1_length(size_t len, size_t offset, size_t max_len) {
     return offset <= max_len && len <= max_len - offset;
 }
 
 /**
- * Funzione che dato un type e una lunghezza verifica che la lunghezza
- * ripestti i limiti peril respettivo type. Fa un lookup nella tabella "tags".
+ * Function that, given a type and a length, checks that the length
+ * respects the limits for the respective type. Performs a lookup
+ * in the "tags" table.
  */
 asn1_parser_error check_len_by_type(asn1_type_t type, size_t len) {
     const types_info *t_i;
@@ -334,9 +340,9 @@ asn1_parser_error check_len_by_type(asn1_type_t type, size_t len) {
 /**************************************************/
 
 /**
- * Crea una entry. Una entry fa parte della struttura asn1_obj 
- * che è un nodo dell'albero ASN.1. Un nodo asn_obj avrà una entry
- * se è un nodo di tipo leaf.
+ * Creates an entry. An entry is part of the asn1_obj structure,
+ * which is a node of the ASN.1 tree. An asn1_obj node will have
+ * an entry if it is a leaf-type node.
  */
 asn1_entry * new_asn1_entry() {
     asn1_entry * entry = malloc(sizeof(struct asn1_entry));
@@ -350,8 +356,8 @@ asn1_entry * new_asn1_entry() {
 }
 
 /**
- * Crea un asn1_obj, che è un nodo dell'albero ASN.1.
- * Ogni nodo di tipo "root" avrà una lista di child.
+ * Creates an asn1_obj, which is a node of the ASN.1 tree.
+ * Each "root"-type node will have a list of children.
  */
 asn1_obj * new_asn1_obj(asn1_type_t type) {
     asn1_obj * obj = malloc(sizeof(struct asn1_obj));
@@ -364,7 +370,7 @@ asn1_obj * new_asn1_obj(asn1_type_t type) {
     obj->dim = 0;
     obj->list = NULL;
 
-    // Se nodo è di tipo root allochiamo lista
+    // If the node is of root type, allocate a list
     uint8_t is_root;
     asn1_parser_error res = is_root_node(type, &is_root);
     if (res < PARSER_OK) {
@@ -388,7 +394,7 @@ asn1_obj * new_asn1_obj(asn1_type_t type) {
 }
 
 /**
- * Appende a list di un nodo di tipo "root".
+ * Appends to the list of a "root"-type node.
  */
 asn1_parser_error append_asn1_obj_list(asn1_obj **obj, asn1_obj *obj_to_append) {
     if (!obj || !*obj || !obj_to_append) return PARSER_ERROR_APPEND_INVALID_OBJ;
@@ -410,7 +416,7 @@ asn1_parser_error append_asn1_obj_list(asn1_obj **obj, asn1_obj *obj_to_append) 
 }
 
 /**
- * Libera una asn1_entry.
+ * Frees an asn1_entry.
  */
 void free_asn1_entry(asn1_entry **entry) {
     if (!entry || !*entry) return;
@@ -425,36 +431,37 @@ void free_asn1_entry(asn1_entry **entry) {
 }
 
 /**
- * Libera tutto un albero ASN.1 comprese le entry dei nodi root.
- * Usa uno stack per memorizzare ogni nodo e liberarlo.
+ * Frees an entire ASN.1 tree including the entries of root nodes.
+ * Uses a stack to store each node and free it.
  */
 asn1_parser_error free_asn1_obj(asn1_obj **obj) {
     if (!obj || !*obj) return PARSER_OK;
 
-    // Punta alla cima dello stack
+    // Points to the top of the stack
     size_t stack_top = 0;
-    // Capacità inziale dello stack
+
+    // Initial capacity of the stack
     size_t stack_cap = PARSER_INIT_DIM_STACK;
     asn1_obj **stack = malloc(sizeof(struct asn1_obj *) * PARSER_INIT_DIM_STACK);
 
     if (!stack) return PARSER_ERROR_FREE_ASN1_OBJ_ALLOC;
 
-    // Mettiamo nello stack il nodo radice dell'albero
+    // Push the root node of the tree onto the stack
     stack[stack_top++] = *obj;
 
     while (stack_top > 0) {
-        // Facciamo una top dallo stack per prendere il primo elemento
+        // Perform a top operation on the stack to get the first element
         asn1_obj *act_obj = stack[stack_top - 1];
 
-        // Se ha una lista piena procediamo a liberare i figli
+        // If it has a non-empty list, proceed to free the children
         if (act_obj->list) {
             for (size_t i = 0; i < act_obj->len; i++) {
-                // Per ogni figlio andiamo a pusharlo nelo stack
-                // Se necessario lo stack viene riallocato per espandere la sua memoria
+                // For each child, push it onto the stack
+                // If necessary, the stack is reallocated to expand its memory
                 if (stack_top == stack_cap) {
                     asn1_obj **tmp = realloc(stack, sizeof(struct asn1_obj *) * (stack_cap * 2));
 
-                    // Se la riallocazione fallisce dobbiamo procedere a liberare tutto lo stack
+                    // If the reallocation fails, we must proceed to free the entire stack
                     if (!tmp) {
                         while (stack_top > 0) {
                             asn1_obj *o = stack[--stack_top];
@@ -467,41 +474,42 @@ asn1_parser_error free_asn1_obj(asn1_obj **obj) {
                     stack = tmp;
                     stack_cap *= 2;
                 }
-                // Pushamo nello stack il figlio
+                // Push the child onto the stack
                 stack[stack_top++] = act_obj->list[i];
             }
 
-            // Una volta che tutti i figli sono stati pushati liberiamo list e
-            // riprendiamo dall'inzio
+            // Once all children have been pushed, free the list and
+            // start over from the beginning
             free(act_obj->list);
             act_obj->list = NULL;
             act_obj->len = 0;
             continue;
         }
 
-        // Se non ha lista significa che è una leaf oppure un nodo precedentemente
-        // Liberato dalla lista.
-        // Quindi procediamo a liberare la entry se la ha e fare un pop dallo stack e liberare il nodo
+        // If it has no list, it means it is a leaf or a node previously
+        // freed from the list.
+        // So proceed to free the entry if it has one, pop it from the stack, and free the node.
         free_asn1_entry(&act_obj->entry);
         free(act_obj);
 
         stack_top--;
     }
     
-    // Lo stack è vuoto quindi tutto è stato liberato 
-    // oppure non c'era nulla da liberare.
-    // Liberiamo puntatore stack.
+    // The stack is empty, so everything has been freed
+    // or there was nothing to free.
+    // Free the stack pointer.
     free(stack);
     *obj = NULL;
     return PARSER_OK;
 }
 
 /**************************************************/
-//             PARSING PER LUNGHEZZE
+//             PARSING FOR LENGHTS
 /**************************************************/
 
-/** La sintassi di trasferimento usata dalle regole di codifica distinte segue sempre 
- * un formato tag, lunghezza, valore. Il formato viene in genere definito triplo TLV.
+/**
+ * The transfer syntax used by distinct encoding rules always follows
+ * a Tag-Length-Value format, commonly referred to as a TLV triplet.
  * 
  * +-------------------------------+
  * |   |   +---------------------+ |
@@ -512,52 +520,58 @@ asn1_parser_error free_asn1_obj(asn1_obj **obj) {
  * +-------------------------------+
  * 
  * 
- * Il campo lunghezza in un triplo TLV identifica il numero di byte codificati nel 
- * campo valore. Il campo Valore contiene il contenuto inviato tra computer. 
- * Se il campo valore contiene meno di 128 byte, il campo lunghezza richiede un solo 
- * byte. Il bit 7 del campo lunghezza è zero (0) e i bit rimanenti identificano il numero 
- * di byte di contenuto inviati. 
- * Se il campo valore contiene più di 127 byte, il bit 7 del campo lunghezza è uno (1) 
- * e i bit rimanenti identificano il numero di byte necessari per contenere la lunghezza. 
- * Gli esempi sono illustrati nella figura seguente.
+ * The Length field in a TLV triplet specifies the number of bytes encoded
+ * in the Value field. The Value field contains the actual data transmitted
+ * between computers. 
+ * 
+ * - If the Value field contains fewer than 128 bytes, the Length field
+ *   uses a single byte. Bit 7 of the Length byte is 0, and the remaining
+ *   bits indicate the number of bytes in the Value field.
+ * 
+ * - If the Value field contains 128 bytes or more, bit 7 of the Length
+ *   byte is set to 1, and the remaining bits specify the number of
+ *   bytes used to encode the length itself.
+ * 
+ * Examples are illustrated below:
  * 
  * |0|0|1|1|0|1|0|0||x|x|x|x|x|x|x|x|x|x|x|x|x|x|...
  *  ^ ^-----------^  ^--------------------------^ 
  *  |  Length = 52           Value -> 52 Bytes
  *  |    
- * Bit per 0<=Length <= 127 bytes
+ * Bit representation for 0 <= Length <= 127 bytes
  * 
  * |1|0|0|0|0|0|1|0||0|0|0|1|0|0|1|1|0|1|0|0|0|1|1|0||x|x|x|x|x|x|x|x|...
  *  ^ ^-----------^  ^-----------------------------^  ^---------------^
- *  | Num Of len = 2       2 Bytes -> 4934			     Value -> 4934 Bytes										
+ *  | Num of length bytes = 2       2 Bytes -> 4934       Value -> 4934 Bytes										
  *  |    
- * Bit per 128 <= Length <= 256^126 bytes
- * 
+ * Bit representation for 128 <= Length <= 2^126 bytes
  */
 
-/** Funzione che dato il byte della lunghezza ritorna:
- *  0 : se il primo bit è zero. len <= 127
- *  1 : se il primo bit è uno. len >= 128
+/**
+ * Function that, given a length byte, returns:
+ *  0 : if the first bit is zero (length <= 127)
+ *  1 : if the first bit is one  (length >= 128)
  */
 uint8_t check_long_form(uint8_t b) {
     return b & PARSER_CHECK_LEN_BYTE_MASK;
 }
 
 /**
- * Funzione che dato un byte estare con una bitmask il valore.
- * Serve per estrarre valore lunghezza in short-form o lunghezza dei byte
- * per long-form.
+ * Function that, given a byte, extracts the value using a bitmask.
+ * Used to extract the length value in short-form or the number of bytes
+ * for long-form length encoding.
  */
 uint8_t extract_len_short_form(uint8_t b) {
     return b & PARSER_EXTRACT_LEN_FROM_BYTES_MASK;
 }
 
 /**
- * Estrae lunghezza di V in TLV. Controlla che i bytes non siano maggiori di 8.
- * Perchè altrimenti significa che abbiamo una lunghezza magiore di 64 bit unsigned,
- * e non possiamo memorizzarla. 64 bit comunque è una scelta ragionevole, in quanto 
- * possiamo avere un V che ha potenzialmente 2^64-1 bytes, chè risulta ragionevole anche
- * per dati riguardanti crittografia (rsa, ecc) che hanno blob non standard.
+ * Extracts the length of V in a TLV. Checks that the number of bytes
+ * does not exceed 8. 
+ * Exceeding 8 bytes would indicate a length larger than a 64-bit unsigned
+ * integer, which cannot be stored. Using 64 bits is a reasonable choice,
+ * as V could potentially have up to 2^64-1 bytes, which is practical
+ * even for non-standard cryptographic data blobs (e.g., RSA, etc.).
  */
 asn1_parser_error extract_len_long_form(uint8_t *buffer, uint8_t bytes, uint64_t *out_len) {
     if (!buffer || !out_len) return PARSER_ERROR_INVALID_BUFFER;
@@ -576,14 +590,15 @@ asn1_parser_error extract_len_long_form(uint8_t *buffer, uint8_t bytes, uint64_t
 }
 
 /**
- * Funzione che dato un puntatore al buffer nella posizione utile per estarre la 
- * lunghezza, estrare lughezza di value in byte, e il numero di byte che descrivono la lunghezza.
+ * Function that, given a pointer to the buffer at the position
+ * for extracting the length, retrieves the length of the Value in bytes,
+ * as well as the number of bytes used to encode the length.
  */
 asn1_parser_error parse_length(uint8_t *buffer, uint64_t *out_len, uint64_t *num_bytes_len) {
     if (!buffer || !out_len || !num_bytes_len) return PARSER_ERROR_INVALID_BUFFER;
 
     uint8_t is_long_form = check_long_form(*(buffer));
-    uint64_t b = extract_len_short_form(*(buffer)); // Per ottenere lunghezza bytes
+    uint64_t b = extract_len_short_form(*(buffer)); // Get the length
     *num_bytes_len = 1;
     if (is_long_form) {
         uint64_t b_aux;
@@ -603,10 +618,12 @@ asn1_parser_error parse_length(uint8_t *buffer, uint64_t *out_len, uint64_t *num
 /**************************************************/
 
 /**
- * Funzione che dato un type, un blob (puntatore a buffer nella poszione utile) e una lunghezza,
- * ritorna una asn1_entry con il contenuto "grezzo" del buffer. La entry avrà lunghezza in byte
- * del contenuto grezzo e un buffer contenente il contenuto grezzo.
- * Utile poi per fare un interpetazione dei valori con funzioni apposite. Es valutare Integer, STRING ecc.
+ * Function that, given a type, a blob (pointer to the buffer at the relevant position),
+ * and a length, returns an asn1_entry containing the "raw" content from the buffer.
+ * The entry will include the length in bytes of the raw content and a buffer
+ * holding the raw data. 
+ * This is useful for interpreting the values later with specific functions,
+ * e.g., evaluating Integer, STRING, etc.
  */
 asn1_parser_error parse_blob(uint8_t type, const uint8_t *blob, size_t len, asn1_entry **entry) {
     if (!entry) return PARSER_ERROR_INVALID_ENTRY;
@@ -654,8 +671,8 @@ asn1_parser_error parse_blob(uint8_t type, const uint8_t *blob, size_t len, asn1
 /**************************************************/
 
 /**
- * Struttura che desscrive una entry per lo stack utilizzato 
- * per il main parser.
+ * Structure describing an entry for the stack used
+ * by the main parser.
  */
 typedef struct parser_stack_entry {
     asn1_obj *obj;
@@ -666,7 +683,7 @@ typedef struct parser_stack_entry {
 } parser_stack_entry;
 
 /**
- * Struttura delo stack per main parser
+ * Structure for the stack used by the main parser
  */
 typedef struct parser_stack {
     size_t dim;
@@ -713,23 +730,24 @@ uint8_t parser_stack_is_empty(parser_stack *stack) {
     return stack->len > 0 ? 0 : 1;
 }
 
-/** Non Libera obj e parent, ma annulla i puntatori. Perchè
- * gli oggetti veri e propri appartengono a asn1_obj che è la 
- * struttura parsata.
- * Sarà una free a asn1_obj a liberarli.
+/**
+ * Does not free obj or parent, but clears the pointers.
+ * The actual objects belong to asn1_obj, which is the
+ * parsed structure. 
+ * Freeing asn1_obj will release them.
  */
 void free_parser_stack_entry(parser_stack_entry **entry) {
     if (!entry || !*entry) return;
 
     (*entry)->obj = NULL;
-    //(*entry)->parent = NULL;
 
     free(*entry);
     *entry = NULL;
 }
 
-/** Fa una free dello stack utilizzato per il parsing.
- * Non l'ibera gli oggetti asn1_obj.
+/**
+ * Frees the stack used for parsing.
+ * Does not free the asn1_obj objects.
  */
 asn1_parser_error free_parser_stack(parser_stack **stack) {
     if (!stack || !*stack) return PARSER_ERROR_STACK_INVALID_STACK;
@@ -756,8 +774,8 @@ asn1_parser_error free_parser_stack(parser_stack **stack) {
 }
 
 /**
- * Realloc dello stack. Se fallisce non cambia stato ma ritorna errore.
- * Liberare la memoria spetta al chiamante.
+ * Reallocates the stack. If it fails, the state remains unchanged and an error is returned.
+ * Freeing the memory is the caller's responsibility.
  */
 asn1_parser_error parser_stack_realloc(parser_stack *stack) {
     if (!stack || !stack->stack) return PARSER_ERROR_STACK_INVALID_STACK;
@@ -775,8 +793,9 @@ asn1_parser_error parser_stack_realloc(parser_stack *stack) {
 }
 
 /**
- * Pusha nello stack. Rialloca in automatico in caso di necessità. Se push fallisce ritorna errore.
- * Liberare la memoria spetta al chiamante.
+ * Pushes onto the stack. Automatically reallocates if needed.
+ * Returns an error if the push fails.
+ * Freeing the memory is the caller's responsibility.
  */
 asn1_parser_error parser_stack_push(parser_stack *stack, parser_stack_entry *entry) {
     if (!stack || !entry || !stack->stack) return PARSER_ERROR_STACK_INVALID_STACK;
@@ -796,7 +815,8 @@ asn1_parser_error parser_stack_push(parser_stack *stack, parser_stack_entry *ent
 }
 
 /**
- * Poppa dallo stack. Non Libera la entry dello stack e la ritorna. se NULL fa solo pop 
+ * Pops from the stack. Does not free the stack entry and returns it.
+ * If NULL, performs a pop only.
  */
 asn1_parser_error parser_stack_pop(parser_stack *stack, parser_stack_entry **out) {
     if (!stack || !stack->stack) return PARSER_ERROR_STACK_INVALID_STACK;
@@ -830,7 +850,7 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
 
     if (!buffer || !obj_out) return PARSER_ERROR_INVALID_BUFFER;
 
-    // Creazione oggetto "root"
+    // Create "root" object
     asn1_type_t type = *buffer;
 
     if (!is_valid_type(type)) {
@@ -856,16 +876,16 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
     obj->type = type;
     obj->entry = NULL;
 
-    // Verifico se obj è una leaf
+    // Check if obj is a leaf
     uint8_t is_root;
     res = is_root_node(type, &is_root);
     if (res < PARSER_OK) {
         free_asn1_obj(&obj);
         return res;
     }
-    // Verifico se obj è una leaf
+    
     if (!is_root) {
-        // Creazione entry oggetto. Estraggo blob e creo entry da mettere in obj
+        // Create object entry. Extract the blob and create an entry to place in obj
         asn1_entry *entry;
         res = parse_blob(type, buffer + 1 + num_bytes, act_len, &entry);
         if (res < PARSER_OK) {
@@ -877,7 +897,7 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
         return PARSER_OK;
     }
 
-    // NON è una leaf. Creiamo stack, pushamo dentro entry.
+    // Not a leaf. Create a stack and push the entry onto it.
     parser_stack *stack = new_parser_stack();
     if (!stack) {
         free_asn1_obj(&obj);
@@ -913,7 +933,7 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
             return res;
         }
 
-        // Controllo per vedere se l'obj dell'entry dello stack è NULL
+        // Check if the obj of the stack entry is NULL
         if (!tmp_stack_entry->obj) {
             free_parser_stack(&stack);
             free_asn1_obj(&obj);
@@ -921,9 +941,9 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
         }
 
         /*printf("----------------------\n");
-        printf("TOP dallo Stack:\n Tag: 0x%x\n", tmp_stack_entry->obj->type);*/
+        printf("TOP from Stack:\n Tag: 0x%x\n", tmp_stack_entry->obj->type);*/
 
-        // E' di tipo "root"
+        // It is of "root" type
         res = is_root_node(tmp_stack_entry->obj->type, &is_root);
         if (res < PARSER_OK) {
             free_parser_stack(&stack);
@@ -932,7 +952,7 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
         }
         if (is_root) {
             /*
-            printf("E' di tipo \"root\".\n");
+            printf("Type \"root\".\n");
             printf("effective_len: %d\n", tmp_stack_entry->effective_len);
             printf("num_bytes_len: %d\n", tmp_stack_entry->num_bytes_len);
             printf("offset: %d\n", tmp_stack_entry->offset);
@@ -947,7 +967,7 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
                     return res;
                 }
                 
-                // Modifico ret_len parent
+                // Modify the parent's ret_len
                 if (!parser_stack_is_empty(stack)) {
                     parser_stack_entry *top_stack_entry;
                     res = parser_stack_top(stack, &top_stack_entry);
@@ -1008,7 +1028,6 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
                 }
 
                 new_tmp_stack_entry->obj = tmp_obj;
-                //new_tmp_stack_entry->parent = tmp_stack_entry->obj;
                 new_tmp_stack_entry->offset = tmp_stack_entry->offset 
                                                 + 1 + tmp_stack_entry->num_bytes_len 
                                                 + tmp_stack_entry->ret_len;
@@ -1016,7 +1035,7 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
                 new_tmp_stack_entry->effective_len = 1 + num_bytes + act_len;
                 new_tmp_stack_entry->ret_len = 0;
 
-                // Appendiamo alla lista del padre
+                // Append to the current node's list
                 res = append_asn1_obj_list(&tmp_stack_entry->obj, tmp_obj);
                 if (res < PARSER_OK) {
                     free_parser_stack(&stack);
@@ -1026,8 +1045,7 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
                     return res;
                 }
                 
-
-                // Push nello stack della entry
+                // Push the entry onto the stack
                 res = parser_stack_push(stack, new_tmp_stack_entry);
                 if (res < PARSER_OK) {
                     free_parser_stack(&stack);
@@ -1038,9 +1056,9 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
             }
         }
 
-        // E' di tipo "leaf"
+        // It is of "leaf" type
         else {
-            /*printf("E' di tipo \"leaf\".\n");
+            /*printf("Type \"leaf\".\n");
             printf("effective_len: %d\n", tmp_stack_entry->effective_len);
             printf("num_bytes_len: %d\n", tmp_stack_entry->num_bytes_len);
             printf("offset: %d\n", tmp_stack_entry->offset);
@@ -1062,7 +1080,7 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
             
             size_t ret_len_aux = tmp_stack_entry->effective_len;
 
-            // Pop della leaf
+            // Pop leaf
             res = parser_stack_pop(stack, NULL);
             if (res < PARSER_OK) {
                 free_parser_stack(&stack);
@@ -1070,7 +1088,7 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
                 return res;
             }
 
-            // Modifico ret_len parent
+            // Modify the parent's ret_len
             if (!parser_stack_is_empty(stack)) {
                 parser_stack_entry *top_stack_entry;
                 res = parser_stack_top(stack, &top_stack_entry);
@@ -1080,7 +1098,7 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
                     return res;
                 }
 
-                // Modifico ret_len parent
+                // Modify the parent's ret_len
                 top_stack_entry->ret_len += ret_len_aux;
             }
         }
@@ -1092,24 +1110,54 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
 }
 
 /************************************ */
+#if 1
 
-void print_tree(const asn1_obj *tree) {
-
-    printf("Tag: 0x%x\n", tree->type);
-    printf("List Len: %d\n", tree->len);
-
-    for (size_t i = 0; i < tree->len; i++) {
-        printf("Child %d: Tag 0x%x, Len %d\n", i, tree->list[i]->type, tree->list[i]->len);
-        printf("--- Child %d: Tag 0x%x, Len %d\n", i, tree->list[i]->list[0]->type, tree->list[i]->list[0]->len);
-        printf("------ Child %d: Tag 0x%x, List Len %d, Entry Len %d, Entry Value 0x%x\n", i, tree->list[i]->list[0]->list[0]->type, tree->list[i]->list[0]->list[0]->len, tree->list[i]->list[0]->list[0]->entry->len, tree->list[i]->list[0]->list[0]->entry->value[0]);
-        printf("------ Child %d: Tag 0x%x, List Len %d, Entry Len %d, Entry Value 0x%x\n", i, tree->list[i]->list[0]->list[1]->type, tree->list[i]->list[0]->list[1]->len, tree->list[i]->list[0]->list[1]->entry->len, tree->list[i]->list[0]->list[1]->entry->value[0]);
+static void print_indent(int indent) {
+    for (int i = 0; i < indent; i++) {
+        printf("|  "); // 2 spazi per livello
     }
-
-
-
 }
 
+
+void asn1_print(const asn1_obj *obj, int indent) {
+    if (!obj) return;
+
+    print_indent(indent);
+    printf("\n");
+
+    print_indent(indent);
+    printf("ASN.1 Object\n");
+
+    print_indent(indent);
+    printf("Type: 0x%02x\n", obj->type);
+    
+
+    // Nodo foglia
+    if (obj->entry && obj->entry->value) {
+        print_indent(indent);
+        printf("Value (len=%zu): ", obj->entry->len);
+
+        for (size_t i = 0; i < obj->entry->len; i++) {
+            printf("%02X ", obj->entry->value[i]);
+        }
+        printf("\n");
+    }
+
+    // Nodo composto: ha figli
+    if (obj->list && obj->len > 0) {
+        print_indent(indent);
+        printf("Children (%zu):\n", obj->len);
+
+        for (size_t i = 0; i < obj->len; i++) {
+            asn1_print(obj->list[i], indent + 1);
+        }
+    }
+}
+
+
 int main() {
+
+    // Test buffer
 
     // Classic ASN.1 DER 
     unsigned char buffer[] = {0x30, 0x23, 0x31, 0x0f, 0x30, 0x0d, 0x06, 0x03, 0x55, 0x04, 0x03,
@@ -1134,16 +1182,55 @@ int main() {
                                0x00,0x2e,0x00,0x4c,0x00,0x4f,0x00,0x43,0x00,0x41,0x00,0x4c,0x00,0x05,0x00,0x14,
                                0x00,0x38,0x00,0x4e,0x00,0x49,0x00,0x49,0x00,0x2e,0x00,0x4c,0x00,0x4f,0x00,0x43,
                                0x00,0x41,0x00,0x4c,0x00,0x00,0x00,0x00,0x00};
+
+    unsigned char buffer3[] = {0x60, 0x48, 0x06, 0x06, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x02, 0xa0, 0x3e, 0x30, 0x3c, 0xa0, 0x0e,
+                               0x30, 0x0c, 0x06, 0x0a, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0x37, 0x02, 0x02, 0x0a, 0xa2, 0x2a,
+                               0x04, 0x28, 0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, 0x01, 0x00, 0x00, 0x00, 0x15, 0x82,
+                               0x08, 0x62, 0x00, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x28, 0x00,
+                               0x00, 0x00, 0x06, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f};
+
+    unsigned char buffer4[] = {0xa1, 0x82, 0x01, 0xfc, 0x30, 0x82, 0x01, 0xf8, 0xa2, 0x82, 0x01, 0xf4, 0x04, 0x82, 0x01, 0xf0,
+                               0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, 0x03, 0x00, 0x00, 0x00, 0x18, 0x00, 0x18, 0x00,
+                               0x58, 0x00, 0x00, 0x00, 0x36, 0x01, 0x36, 0x01, 0x70, 0x00, 0x00, 0x00, 0x12, 0x00, 0x12, 0x00,
+                               0xa6, 0x01, 0x00, 0x00, 0x06, 0x00, 0x06, 0x00, 0xb8, 0x01, 0x00, 0x00, 0x22, 0x00, 0x22, 0x00,
+                               0xbe, 0x01, 0x00, 0x00, 0x10, 0x00, 0x10, 0x00, 0xe0, 0x01, 0x00, 0x00, 0x15, 0x82, 0x08, 0x62,
+                               0x06, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x01, 0x58, 0x1d, 0x5b, 0x64, 0x84, 0xbf, 0x86,
+                               0x99, 0x09, 0x64, 0xe6, 0x49, 0x13, 0x08, 0x6b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                               0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                               0x1e, 0x69, 0xad, 0x14, 0x8b, 0x55, 0x9a, 0x1a, 0x34, 0xcb, 0x95, 0x26, 0x20, 0xc5, 0xc8, 0x36,
+                               0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xb6, 0x18, 0x72, 0x02, 0xcc, 0x8a, 0xdc, 0x01,
+                               0xd0, 0x9c, 0xd6, 0x0b, 0x64, 0xff, 0x26, 0xd4, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x08, 0x00,
+                               0x38, 0x00, 0x4e, 0x00, 0x49, 0x00, 0x49, 0x00, 0x01, 0x00, 0x1e, 0x00, 0x57, 0x00, 0x49, 0x00,
+                               0x4e, 0x00, 0x2d, 0x00, 0x31, 0x00, 0x46, 0x00, 0x58, 0x00, 0x34, 0x00, 0x55, 0x00, 0x4d, 0x00,
+                               0x50, 0x00, 0x53, 0x00, 0x34, 0x00, 0x54, 0x00, 0x42, 0x00, 0x04, 0x00, 0x34, 0x00, 0x57, 0x00,
+                               0x49, 0x00, 0x4e, 0x00, 0x2d, 0x00, 0x31, 0x00, 0x46, 0x00, 0x58, 0x00, 0x34, 0x00, 0x55, 0x00,
+                               0x4d, 0x00, 0x50, 0x00, 0x53, 0x00, 0x34, 0x00, 0x54, 0x00, 0x42, 0x00, 0x2e, 0x00, 0x38, 0x00,
+                               0x4e, 0x00, 0x49, 0x00, 0x49, 0x00, 0x2e, 0x00, 0x4c, 0x00, 0x4f, 0x00, 0x43, 0x00, 0x41, 0x00,
+                               0x4c, 0x00, 0x03, 0x00, 0x14, 0x00, 0x38, 0x00, 0x4e, 0x00, 0x49, 0x00, 0x49, 0x00, 0x2e, 0x00,
+                               0x4c, 0x00, 0x4f, 0x00, 0x43, 0x00, 0x41, 0x00, 0x4c, 0x00, 0x05, 0x00, 0x14, 0x00, 0x38, 0x00,
+                               0x4e, 0x00, 0x49, 0x00, 0x49, 0x00, 0x2e, 0x00, 0x4c, 0x00, 0x4f, 0x00, 0x43, 0x00, 0x41, 0x00,
+                               0x4c, 0x00, 0x08, 0x00, 0x30, 0x00, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                               0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x45, 0x09, 0x2b, 0x4f, 0x13, 0x3a, 0xc9, 0xcf, 0x9f, 0xb6,
+                               0x47, 0xdc, 0x6c, 0xa6, 0x4f, 0x41, 0x8a, 0x12, 0xff, 0xb0, 0xa6, 0x57, 0xd2, 0xb9, 0x5b, 0xd6,
+                               0x0d, 0x7f, 0xc9, 0xa2, 0xac, 0x8f, 0x0a, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                               0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x00, 0x24, 0x00, 0x63, 0x00,
+                               0x69, 0x00, 0x66, 0x00, 0x73, 0x00, 0x2f, 0x00, 0x31, 0x00, 0x39, 0x00, 0x32, 0x00, 0x2e, 0x00,
+                               0x31, 0x00, 0x36, 0x00, 0x38, 0x00, 0x2e, 0x00, 0x34, 0x00, 0x32, 0x00, 0x2e, 0x00, 0x32, 0x00,
+                               0x36, 0x00, 0x00, 0x00, 0x00, 0x00, 0x57, 0x00, 0x4f, 0x00, 0x52, 0x00, 0x4b, 0x00, 0x47, 0x00,
+                               0x52, 0x00, 0x4f, 0x00, 0x55, 0x00, 0x50, 0x00, 0x61, 0x00, 0x31, 0x00, 0x34, 0x00, 0x4b, 0x00,
+                               0x41, 0x00, 0x4c, 0x00, 0x49, 0x00, 0x4c, 0x00, 0x49, 0x00, 0x4e, 0x00, 0x55, 0x00, 0x58, 0x00,
+                               0x2d, 0x00, 0x32, 0x00, 0x30, 0x00, 0x32, 0x00, 0x33, 0x00, 0x2d, 0x00, 0x30, 0x00, 0x32, 0x00,
+                               0xd9, 0x34, 0x25, 0xe6, 0x04, 0x32, 0xc4, 0x60, 0xf2, 0x7e, 0x1c, 0xa5, 0x35, 0xbe, 0xf6, 0x22};
     
     asn1_obj *out;
-    asn1_parser_error err = parse(buffer2, 249, &out);
+    asn1_parser_error err = parse(buffer4, 512, &out);
 
     if (err < PARSER_OK) {
         printf("Error: 0x%x\n", err);
         return 1;
     }
 
-    //print_tree(out);
+    asn1_print(out, 0);
 
     free_asn1_obj(&out);
 
@@ -1151,3 +1238,5 @@ int main() {
 
     return 0;
 }
+
+#endif
