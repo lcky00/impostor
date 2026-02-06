@@ -940,8 +940,10 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
             return PARSER_ERROR_STACK_ENTRY_OBJ_IS_NULL;
         }
 
-        /*printf("----------------------\n");
-        printf("TOP from Stack:\n Tag: 0x%x\n", tmp_stack_entry->obj->type);*/
+#ifdef ASN1_PARSER_DEBUG
+        printf("----------------------\n");
+        printf("TOP from Stack:\n Tag: 0x%x\n", tmp_stack_entry->obj->type);
+#endif
 
         // It is of "root" type
         res = is_root_node(tmp_stack_entry->obj->type, &is_root);
@@ -951,12 +953,14 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
             return res;
         }
         if (is_root) {
-            /*
+
+#ifdef ASN1_PARSER_DEBUG
             printf("Type \"root\".\n");
             printf("effective_len: %d\n", tmp_stack_entry->effective_len);
             printf("num_bytes_len: %d\n", tmp_stack_entry->num_bytes_len);
             printf("offset: %d\n", tmp_stack_entry->offset);
-            printf("ret_len: %d\n", tmp_stack_entry->ret_len);*/
+            printf("ret_len: %d\n", tmp_stack_entry->ret_len);
+#endif
 
             if (tmp_stack_entry->ret_len >= (tmp_stack_entry->effective_len - 1 - tmp_stack_entry->num_bytes_len)) {
                 size_t temp_eff_len = tmp_stack_entry->effective_len;
@@ -1058,11 +1062,14 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
 
         // It is of "leaf" type
         else {
-            /*printf("Type \"leaf\".\n");
+
+#ifdef ASN1_PARSER_DEBUG
+            printf("Type \"leaf\".\n");
             printf("effective_len: %d\n", tmp_stack_entry->effective_len);
             printf("num_bytes_len: %d\n", tmp_stack_entry->num_bytes_len);
             printf("offset: %d\n", tmp_stack_entry->offset);
-            printf("ret_len: %d\n", tmp_stack_entry->ret_len);*/
+            printf("ret_len: %d\n", tmp_stack_entry->ret_len);
+#endif
             asn1_entry *obj_entry;
             res = parse_blob(tmp_stack_entry->obj->type, buffer + 
                                 tmp_stack_entry->offset +
