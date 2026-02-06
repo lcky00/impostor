@@ -16,7 +16,7 @@
 #define PARSER_MAX_LEN_VALUE_BYTES              127           // 127 
 
 /* Dimesioni di inizializzazione e limiti massimi */
-#define PARSER_INIT_DIM_LIST_ASN1_OBJ           100
+#define PARSER_INIT_DIM_LIST_ASN1_OBJ           10
 #define PARSER_MAX_DIM_LIST_ASN1_OBJ            400
 #define PARSER_MAX_ENTRY_VALUE_LEN              (4 * 1024)     // 4 KB
 
@@ -262,7 +262,6 @@ typedef struct asn1_obj {
  * Funzione di utility per ottenere, dato un type, la sua entry
  * nella tabella tags.
  */
-
 asn1_parser_error get_type_info_by_type(asn1_type_t type, const types_info **out) {
     if (!out) return PARSER_ERROR_INVALID_ARG;
     for (size_t i = 0; i < TAGS_SIZE; i++) {
@@ -343,7 +342,7 @@ asn1_entry * new_asn1_entry() {
  * Crea un asn1_obj, che è un nodo dell'albero ASN.1.
  * Ogni nodo di tipo "root" avrà una lista di child.
  */
-asn1_obj * new_asn1_obj() {
+asn1_obj * new_asn1_obj(asn1_type_t type) {
     asn1_obj * obj = malloc(sizeof(struct asn1_obj));
 
     if (!obj) return NULL;
@@ -351,16 +350,29 @@ asn1_obj * new_asn1_obj() {
     obj->type = 0;
     obj->entry = NULL;
     obj->len = 0;
-    obj->dim = PARSER_INIT_DIM_LIST_ASN1_OBJ;
-    obj->list = malloc(sizeof(struct asn1_obj *) * PARSER_INIT_DIM_LIST_ASN1_OBJ);
+    obj->dim = 0;
+    obj->list = NULL;
 
-    if (!obj->list) {
+    // Se nodo è di tipo root allochiamo lista
+    uint8_t is_root;
+    asn1_parser_error res = is_root_node(type, &is_root);
+    if (res < PARSER_OK) {
         free(obj);
         return NULL;
     }
 
-    memset(obj->list, 0, sizeof(struct asn1_obj *) * PARSER_INIT_DIM_LIST_ASN1_OBJ);
-    
+    if (is_root) {
+        obj->dim = PARSER_INIT_DIM_LIST_ASN1_OBJ;
+        obj->list = malloc(sizeof(struct asn1_obj *) * PARSER_INIT_DIM_LIST_ASN1_OBJ);
+
+        if (!obj->list) {
+            free(obj);
+            return NULL;
+        }
+
+        memset(obj->list, 0, sizeof(struct asn1_obj *) * PARSER_INIT_DIM_LIST_ASN1_OBJ);
+    }
+
     return obj;
 }
 
@@ -391,7 +403,7 @@ asn1_parser_error append_asn1_obj_list(asn1_obj **obj, asn1_obj *obj_to_append) 
  */
 void free_asn1_entry(asn1_entry **entry) {
     if (!entry || !*entry) return;
-
+    
     if ((*entry)->value) {
         free((*entry)->value);
         (*entry)->value = NULL;
@@ -635,13 +647,11 @@ asn1_parser_error parse_blob(uint8_t type, const uint8_t *blob, size_t len, asn1
  * per il main parser.
  */
 typedef struct parser_stack_entry {
-    asn1_obj *parent;
     asn1_obj *obj;
     size_t ret_len;
     size_t effective_len;  
     size_t offset;  
     size_t num_bytes_len;
-    uint8_t is_base_stack;
 } parser_stack_entry;
 
 /**
@@ -659,11 +669,9 @@ parser_stack_entry * new_parser_stack_entry() {
 
     if (!entry) return NULL;
 
-    entry->parent = NULL;
     entry->obj = NULL;
     entry->ret_len = 0;
     entry->offset = 0;
-    entry->is_base_stack = 0;
     entry->effective_len = 0;
     entry->num_bytes_len = 0;
 
@@ -703,7 +711,7 @@ void free_parser_stack_entry(parser_stack_entry **entry) {
     if (!entry || !*entry) return;
 
     (*entry)->obj = NULL;
-    (*entry)->parent = NULL;
+    //(*entry)->parent = NULL;
 
     free(*entry);
     *entry = NULL;
@@ -812,7 +820,14 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
     if (!buffer || !obj_out) return PARSER_ERROR_INVALID_BUFFER;
 
     // Creazione oggetto "root"
-    asn1_obj *obj = new_asn1_obj();
+    asn1_type_t type = *buffer;
+
+    if (!is_valid_type(type)) {
+        
+        return PARSER_ERROR_INVALID_TAG;
+    }
+
+    asn1_obj *obj = new_asn1_obj(type);
     if (!obj) return PARSER_ERROR_ALLOC_NEW_ASN1_OBJECT;
 
     uint64_t act_len, num_bytes;
@@ -825,13 +840,6 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
     if (!is_safe_asn1_length(act_len, 0, len)) {
         free_asn1_obj(&obj);
         return PARSER_ERROR_ASN1_BLOB_LEN_TOO_BIG;
-    }
-
-    asn1_type_t type = *buffer;
-
-    if (!is_valid_type(type)) {
-        free_asn1_obj(&obj);
-        return PARSER_ERROR_INVALID_TAG;
     }
 
     obj->type = type;
@@ -873,12 +881,10 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
     }
 
     stack_entry->obj = obj;
-    stack_entry->parent = NULL;
     stack_entry->effective_len = 1 + num_bytes + act_len;
     stack_entry->num_bytes_len = num_bytes;
     stack_entry->offset = 0;
     stack_entry->ret_len = 0;
-    stack_entry->is_base_stack = 1;
 
     res = parser_stack_push(stack, stack_entry);
     if (res < PARSER_OK) {
@@ -903,8 +909,8 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
             return PARSER_ERROR_STACK_ENTRY_OBJ_IS_NULL;
         }
 
-        printf("----------------------\n");
-        printf("TOP dallo Stack:\n Tag: 0x%x\n", tmp_stack_entry->obj->type);
+        /*printf("----------------------\n");
+        printf("TOP dallo Stack:\n Tag: 0x%x\n", tmp_stack_entry->obj->type);*/
 
         // E' di tipo "root"
         res = is_root_node(tmp_stack_entry->obj->type, &is_root);
@@ -914,11 +920,12 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
             return res;
         }
         if (is_root) {
+            /*
             printf("E' di tipo \"root\".\n");
             printf("effective_len: %d\n", tmp_stack_entry->effective_len);
             printf("num_bytes_len: %d\n", tmp_stack_entry->num_bytes_len);
             printf("offset: %d\n", tmp_stack_entry->offset);
-            printf("ret_len: %d\n", tmp_stack_entry->ret_len);
+            printf("ret_len: %d\n", tmp_stack_entry->ret_len);*/
 
             if (tmp_stack_entry->ret_len >= (tmp_stack_entry->effective_len - 1 - tmp_stack_entry->num_bytes_len)) {
                 size_t temp_eff_len = tmp_stack_entry->effective_len;
@@ -951,7 +958,7 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
                     return PARSER_ERROR_INVALID_TAG;
                 }
 
-                asn1_obj * tmp_obj = new_asn1_obj();
+                asn1_obj * tmp_obj = new_asn1_obj(type);
                 if (!tmp_obj) {
                     free_parser_stack(&stack);
                     free_asn1_obj(&obj);
@@ -990,7 +997,7 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
                 }
 
                 new_tmp_stack_entry->obj = tmp_obj;
-                new_tmp_stack_entry->parent = tmp_stack_entry->obj;
+                //new_tmp_stack_entry->parent = tmp_stack_entry->obj;
                 new_tmp_stack_entry->offset = tmp_stack_entry->offset 
                                                 + 1 + tmp_stack_entry->num_bytes_len 
                                                 + tmp_stack_entry->ret_len;
@@ -999,16 +1006,15 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
                 new_tmp_stack_entry->ret_len = 0;
 
                 // Appendiamo alla lista del padre
-                if (!tmp_stack_entry->is_base_stack) {
-                    res = append_asn1_obj_list(&tmp_stack_entry->parent, tmp_obj);
-                    if (res < PARSER_OK) {
-                        free_parser_stack(&stack);
-                        free_asn1_obj(&obj);
-                        free_asn1_obj(&tmp_obj);
-                        free_parser_stack_entry(&new_tmp_stack_entry);
-                        return res;
-                    }
+                res = append_asn1_obj_list(&tmp_stack_entry->obj, tmp_obj);
+                if (res < PARSER_OK) {
+                    free_parser_stack(&stack);
+                    free_asn1_obj(&obj);
+                    free_asn1_obj(&tmp_obj);
+                    free_parser_stack_entry(&new_tmp_stack_entry);
+                    return res;
                 }
+                
 
                 // Push nello stack della entry
                 res = parser_stack_push(stack, new_tmp_stack_entry);
@@ -1023,11 +1029,11 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
 
         // E' di tipo "leaf"
         else {
-            printf("E' di tipo \"leaf\".\n");
+            /*printf("E' di tipo \"leaf\".\n");
             printf("effective_len: %d\n", tmp_stack_entry->effective_len);
             printf("num_bytes_len: %d\n", tmp_stack_entry->num_bytes_len);
             printf("offset: %d\n", tmp_stack_entry->offset);
-            printf("ret_len: %d\n", tmp_stack_entry->ret_len);
+            printf("ret_len: %d\n", tmp_stack_entry->ret_len);*/
             asn1_entry *obj_entry;
             res = parse_blob(tmp_stack_entry->obj->type, buffer + 
                                 tmp_stack_entry->offset +
@@ -1042,22 +1048,7 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
             }
 
             tmp_stack_entry->obj->entry = obj_entry;
-            // append in parent
-            res = append_asn1_obj_list(&tmp_stack_entry->parent, tmp_stack_entry->obj);
-            if (res < PARSER_OK) {
-                free_parser_stack(&stack);
-                free_asn1_obj(&obj);
-                free_asn1_entry(&obj_entry);
-                return res;
-            }
-
-            // Essendo una leaf facciamo una free di list
-            if (tmp_stack_entry->obj->list) {
-                free(tmp_stack_entry->obj->list);
-                tmp_stack_entry->obj->dim = 0;
-                tmp_stack_entry->obj->list = NULL;
-            }
-
+            
             size_t ret_len_aux = tmp_stack_entry->effective_len;
 
             // Pop della leaf
@@ -1089,7 +1080,23 @@ asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out) {
     return PARSER_OK;
 }
 
+/************************************ */
 
+void print_tree(const asn1_obj *tree) {
+
+    printf("Tag: 0x%x\n", tree->type);
+    printf("List Len: %d\n", tree->len);
+
+    for (size_t i = 0; i < tree->len; i++) {
+        printf("Child %d: Tag 0x%x, Len %d\n", i, tree->list[i]->type, tree->list[i]->len);
+        printf("--- Child %d: Tag 0x%x, Len %d\n", i, tree->list[i]->list[0]->type, tree->list[i]->list[0]->len);
+        printf("------ Child %d: Tag 0x%x, List Len %d, Entry Len %d, Entry Value 0x%x\n", i, tree->list[i]->list[0]->list[0]->type, tree->list[i]->list[0]->list[0]->len, tree->list[i]->list[0]->list[0]->entry->len, tree->list[i]->list[0]->list[0]->entry->value[0]);
+        printf("------ Child %d: Tag 0x%x, List Len %d, Entry Len %d, Entry Value 0x%x\n", i, tree->list[i]->list[0]->list[1]->type, tree->list[i]->list[0]->list[1]->len, tree->list[i]->list[0]->list[1]->entry->len, tree->list[i]->list[0]->list[1]->entry->value[0]);
+    }
+
+
+
+}
 
 int main() {
 
@@ -1118,12 +1125,14 @@ int main() {
                                0x00,0x41,0x00,0x4c,0x00,0x00,0x00,0x00,0x00};
     
     asn1_obj *out;
-    asn1_parser_error err = parse(buffer2, 249, &out);
+    asn1_parser_error err = parse(buffer, 37, &out);
 
     if (err < PARSER_OK) {
         printf("Error: 0x%x\n", err);
         return 1;
     }
+
+    print_tree(out);
 
     free_asn1_obj(&out);
 
