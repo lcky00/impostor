@@ -4,36 +4,72 @@
  * 
  * Luca Vinci <luca9vinci at gmail dot com>
  * 
+ * Parser non ero-copy, crea copia del buffer nella struttura di output.
+ * Andarà liberata memoria dal chiamante. Non intacca buffer.
+ * 
+ * All numeric fields in output are host-endian.
+ * 
  */
 
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 
-#define NLMP_PARSER_OK 0x00000000
-#define NLMP_PARSER_ERROR_INVALID_ARGS 0x80000001
-#define NLMP_PARSER_ERROR_INVALID_SIGNATURE 0x80000002
-#define NLMP_PARSER_ERROR_INVALID_MSG_TYPE 0x80000003
-#define NLMP_PARSER_ERROR_BUFF_OVERFLOW 0x80000004
+/* Errori parsing */
+#define NTLM_PARSER_OK                          0x00000000
+#define NTLM_PARSER_ERROR_INVALID_ARGS          0x80000001
+#define NTLM_PARSER_ERROR_INVALID_SIGNATURE     0x80000002
+#define NTLM_PARSER_ERROR_INVALID_MSG_TYPE      0x80000003
+#define NTLM_PARSER_ERROR_BUFF_OVERFLOW         0x80000004
+#define NTLM_PARSER_ERROR_BUFF_TOO_BIG          0x80000005
+#define NTLM_PARSER_ERROR_MALFORMED_MSG         0x80000006
 
-typedef int32_t nlmp_parser_error;
+typedef int32_t ntlm_parser_error;
 
-#define NLMP_HEADER_SIGNATURE_DIM      8     // 8 Bytes
-#define NLMP_HEADER_MIC_DIM            16    // 16 Bytes
+/* Costanti utili (dimensioni, limiti)*/
+#define NTLM_MAX_MSG_DIM 64 * 1024   // 64 KB
 
-#define NLMP_HEADER_FIELDS_STRUCT_DIM  8     // 8 Bytes - 64 bit
+#define NTLM_HEADER_SIGNATURE_SIZE              8     // 8 Bytes
+#define NTLM_HEADER_MIC_SIZE                    16    // 16 Bytes
 
+#define NTLM_HEADER_FIELDS_STRUCT_SIZE          8     // 8 Bytes - 64 bit
+#define NTLM_NEGOTIATE_MESSAGE_HEADER_SIZE      40    // Signature + MessageType 
+                                                      // + NegotiateFlags + DomainNameFields 
+                                                      // + WorkstationFields + Version
+
+#define NTLM_V2_RESPONSE_SIZE   16   // 16 Bytes
+#define NTLM_RESPONSE_SIZE      24   // 24 Bytes
+
+#define LM_V2_RESPONSE_SIZE   24   // 24 Bytes
+#define LM_RESPONSE_SIZE      24   // 24 Bytes
+
+/* Tipi messaggi NTLM */
 #define NEGOTIATE_MESSAGE    0x00000001
 #define CHALLENGE_MESSAGE    0x00000002
 #define AUTHENTICATE_MESSAGE 0x00000003
 
-typedef uint32_t nlmp_msg_type_t;
-typedef uint64_t nlmp_msg_version;
-typedef uint8_t * nlmp_msg_payload_t;
+typedef uint32_t ntlm_msg_type_t;
 
-uint8_t ntml_protocol_sign[NLMP_HEADER_SIGNATURE_DIM] = {'N', 'T', 'L', 'M', 'S', 'S', 'P', '\0'};
+/* Tipi per LM Response per payload */
+#define LM_RESPONSE_V1 0x01
+#define LM_RESPONSE_V2 0x02
 
-/* NegFlags*/
+typedef uint8_t lm_response_type_t;
+
+/* Tipi per NTLM Response per payload */
+#define NTLM_RESPONSE_V1 0x01
+#define NTLM_RESPONSE_V2 0x02
+
+typedef uint8_t ntlm_response_type_t;
+
+/* Firma del protcollo */
+static const uint8_t ntlm_protocol_sign[NTLM_HEADER_SIGNATURE_SIZE] = {'N', 'T', 'L', 'M', 'S', 'S', 'P', '\0'};
+
+typedef uint32_t ntlm_negotiate_flags_t;
+
+/******************************************/
+//               NegFlags
+/******************************************/
 #define NTLMSSP_NEGOTIATE_56                            0x80000000
 
 // If the NTLMSSP_NEGOTIATE_KEY_EXCH flag is set 
@@ -96,10 +132,33 @@ uint8_t ntml_protocol_sign[NLMP_HEADER_SIGNATURE_DIM] = {'N', 'T', 'L', 'M', 'S'
 #define NTLM_NEGOTIATE_OEM                              0x00000002
 #define NTLMSSP_NEGOTIATE_UNICODE                       0x00000001
 
+/******************************************/
+//               AV_PAIR ID
+/******************************************/
+
+#define MSV_AV_EOL                  0x0000
+#define MSV_AV_NB_COMPUTER_NAME     0x0001
+#define MSV_AV_NB_DOMAIN_NAME       0x0002
+#define MSV_AV_DNS_COMPUTER_NAME    0x0003
+#define MSV_AV_DNS_DOMAIN_NAME      0x0004
+#define MSV_AV_DNS_TREE_NAME        0x0005
+#define MSV_AV_FLAGS                0x0006
+#define MSV_AV_TIMESTAMP            0x0007
+#define MSV_AV_SINGLE_HOST          0x0008
+#define MSV_AV_TARGET_NAME          0x0009
+#define MSV_AV_CHANNEL_BINDINGS     0x000a
+
+typedef uint16_t av_pair_id_t;
 
 /******************************************/
 //       Structs for Msg's Headers
 /******************************************/
+
+typedef struct ntlm_blob_t {
+    uint32_t len;
+    uint8_t *data;
+} ntlm_blob_t;
+
 
 typedef struct header_fields_t {
     uint16_t len;
@@ -108,76 +167,167 @@ typedef struct header_fields_t {
 } header_fields_t;
 
 
-typedef struct nlmp_negotiate_msg_header_t {
-    uint32_t negotiate_flags;
+typedef struct ntlm_negotiate_msg_header_t {
+    ntlm_negotiate_flags_t negotiate_flags;
+
     header_fields_t domain_name_fields;
     header_fields_t workstation_fields;
-    nlmp_msg_version version;
-} nlmp_negotiate_msg_header_t;
+
+    uint8_t version_present;
+    ntlm_blob_t version;
+} ntlm_negotiate_msg_header_t;
 
 
-typedef struct nlmp_challenge_msg_header_t {
+typedef struct ntlm_challenge_msg_header_t {
     header_fields_t target_name_fields;
-    uint32_t negotiate_flags;
+
+    ntlm_negotiate_flags_t negotiate_flags;
     uint64_t server_challenge;
-    uint64_t reserved;
+
+    uint8_t reserved[8];
+
     header_fields_t target_info_fields;
-    nlmp_msg_version version;
-} nlmp_challenge_msg_header_t;
+
+    uint8_t version_present;
+    ntlm_blob_t version;
+} ntlm_challenge_msg_header_t;
 
 
-typedef struct nlmp_authenticate_msg_header_t {
+typedef struct ntlm_authenticate_msg_header_t {
     header_fields_t lm_challenge_resp_fields;
     header_fields_t nt_challenge_resp_fields;
     header_fields_t domain_name_fields;
     header_fields_t username_fields;
     header_fields_t workstation_fields;
     header_fields_t encrypted_random_session_key_fields;
-    uint32_t negotiate_flags;
-    nlmp_msg_version version;
-    uint8_t mic[NLMP_HEADER_MIC_DIM];
-} nlmp_authenticate_msg_header_t;
+
+    ntlm_negotiate_flags_t negotiate_flags;
+
+    uint8_t version_present;
+    ntlm_blob_t version;
+
+    uint8_t mic_present;
+    uint8_t mic[NTLM_HEADER_MIC_SIZE];
+} ntlm_authenticate_msg_header_t;
 
 /******* Fixed Header for messagges *******/
-typedef struct nlmp_header_t {
-    uint8_t signature[NLMP_HEADER_SIGNATURE_DIM];
-    nlmp_msg_type_t message_type;
+typedef struct ntlm_header_t {
+    uint8_t signature[NTLM_HEADER_SIGNATURE_SIZE];
+    ntlm_msg_type_t message_type;
     union {
-        nlmp_negotiate_msg_header_t nlmp_negotiate_msg_header;
-        nlmp_challenge_msg_header_t nlmp_challenge_msg_header;
-        nlmp_authenticate_msg_header_t nlmp_authenticate_msg_header;
+        ntlm_negotiate_msg_header_t ntlm_negotiate_msg_header;
+        ntlm_challenge_msg_header_t ntlm_challenge_msg_header;
+        ntlm_authenticate_msg_header_t ntlm_authenticate_msg_header;
     } msg_header;
-} nlmp_header_t;
+} ntlm_header_t;
 
+/******************************************/
+//       Structs for Msg's Payloads
+/******************************************/
+
+typedef struct ntlm_v2_response_t {
+    uint8_t response[NTLM_V2_RESPONSE_SIZE];
+    ntlm_blob_t ntlm_v2_client_challenge;
+} ntlm_v2_response_t;
+
+typedef struct ntlm_response_t {
+    uint8_t response[NTLM_RESPONSE_SIZE];
+} ntlm_response_t;
+
+// In totlae 24 Bytes
+typedef struct lm_v2_response_t {
+    uint8_t response[LM_V2_RESPONSE_SIZE];
+    uint64_t challenge_from_client;
+} lm_v2_response_t;
+
+// In totlae 24 Bytes
+typedef struct lm_response_t {
+    uint8_t response[LM_RESPONSE_SIZE];
+} lm_response_t;
+
+/*************/
+
+typedef struct ntlm_negotiate_msg_payload_t {
+    ntlm_blob_t domain_name;
+    ntlm_blob_t workstation_name;
+} ntlm_negotiate_msg_payload_t;
+
+
+typedef struct ntlm_challenge_msg_payload_t {
+    ntlm_blob_t target_name;
+    ntlm_blob_t target_info;
+} ntlm_challenge_msg_payload_t;
+
+
+typedef struct ntlm_authenticate_msg_payload_t {
+    lm_response_type_t lm_response_type;
+    union {
+        lm_response_t lm_response;
+        lm_v2_response_t lm_v2_response;
+    } lm_challenge_response;
+
+    ntlm_response_type_t ntlm_response_type;
+    union {
+        ntlm_response_t ntlm_response;
+        ntlm_v2_response_t ntlm_v2_response;
+    } nt_challenge_response;
+
+    ntlm_blob_t domain_name;
+    ntlm_blob_t username;
+    ntlm_blob_t workstation_name;
+    ntlm_blob_t encrypted_random_session_key;
+} ntlm_authenticate_msg_payload_t;
 
 /******************************************/
 //             Main Msg Struct
 /******************************************/
-typedef struct nlmp_msg_t{
-    nlmp_header_t header;
-    nlmp_msg_payload_t payload;
-} nlmp_msg_t;
+typedef struct ntlm_msg_t {
+    ntlm_header_t header;
+
+    // in base al tipo del messaggio in header
+    union {
+        ntlm_negotiate_msg_payload_t ntlm_negotiate_msg_payload;
+        ntlm_challenge_msg_payload_t ntlm_challenge_msg_payload;
+        ntlm_authenticate_msg_payload_t ntlm_authenticate_msg_payload;
+    } payload;
+    
+} ntlm_msg_t;
 
 /******************************************/
-//             Utils Parser
+//            Buffer Context 
 /******************************************/
 
-nlmp_parser_error check_signature(const uint8_t *signature) {
-    if (!signature) return NLMP_PARSER_ERROR_INVALID_ARGS;
+typedef struct ntlm_buffer_ctx_t {
+    const uint8_t *buf;
+    size_t size;
+    size_t offset;
+} ntlm_buffer_ctx_t;
 
-    for (size_t i = 0; i < NLMP_HEADER_SIGNATURE_DIM; i++) {
-        if (signature[i] != ntml_protocol_sign[i]) return NLMP_PARSER_ERROR_INVALID_SIGNATURE;
-    }
+/******************************************/
+//          Msg and Buffer Utils 
+/******************************************/
 
-    return NLMP_PARSER_OK;
+ntlm_parser_error free_ntlm_msg(ntlm_msg_t msg) {
+
 }
 
-nlmp_parser_error check_msg_type(nlmp_msg_type_t type) {
+
+ntlm_parser_error check_signature(const uint8_t *signature) {
+    if (!signature) return NTLM_PARSER_ERROR_INVALID_ARGS;
+
+    for (size_t i = 0; i < NTLM_HEADER_SIGNATURE_SIZE; i++) {
+        if (signature[i] != ntlm_protocol_sign[i]) return NTLM_PARSER_ERROR_INVALID_SIGNATURE;
+    }
+
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error check_msg_type(ntlm_msg_type_t type) {
     if (type == CHALLENGE_MESSAGE 
     || type == NEGOTIATE_MESSAGE 
-    || type == AUTHENTICATE_MESSAGE) return NLMP_PARSER_OK;
+    || type == AUTHENTICATE_MESSAGE) return NTLM_PARSER_OK;
 
-    return NLMP_PARSER_ERROR_INVALID_MSG_TYPE;
+    return NTLM_PARSER_ERROR_INVALID_MSG_TYPE;
 }
 
 
@@ -207,6 +357,47 @@ nlmp_parser_error read_u32_le(const uint8_t *buffer, size_t len, uint32_t *out) 
     return NLMP_PARSER_OK;
 }
 
+/* Funzione che legge da un buffer 8 byte in little endian e li slava come un uint64 */
+nlmp_parser_error read_u64_le(const uint8_t *buffer, size_t len, uint64_t *out) {
+    if (!buffer || !out) return NLMP_PARSER_ERROR_INVALID_ARGS;
+
+    if (len < sizeof(uint64_t)) return NLMP_PARSER_ERROR_BUFF_OVERFLOW;
+
+    *out = (uint64_t)*(buffer)
+           | ((uint64_t)*(buffer + 1) << 8)
+           | ((uint64_t)*(buffer + 2) << 16)
+           | ((uint64_t)*(buffer + 3) << 24)
+           | ((uint64_t)*(buffer + 4) << 32)
+           | ((uint64_t)*(buffer + 5) << 40)
+           | ((uint64_t)*(buffer + 6) << 48)
+           | ((uint64_t)*(buffer + 7) << 56);
+
+    return NLMP_PARSER_OK;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /******************************************/
 //             Parse Functions
 /******************************************/
@@ -214,9 +405,9 @@ nlmp_parser_error read_u32_le(const uint8_t *buffer, size_t len, uint32_t *out) 
 nlmp_parser_error parse_header_signature(const uint8_t *buffer, size_t len, uint8_t *signature) {
     if (!buffer || !signature) return NLMP_PARSER_ERROR_INVALID_ARGS;
 
-    if (len < NLMP_HEADER_SIGNATURE_DIM) return NLMP_PARSER_ERROR_BUFF_OVERFLOW;
+    if (len < NLMP_HEADER_SIGNATURE_SIZE) return NLMP_PARSER_ERROR_BUFF_OVERFLOW;
 
-    memcpy(signature, buffer, NLMP_HEADER_SIGNATURE_DIM);
+    memcpy(signature, buffer, NLMP_HEADER_SIGNATURE_SIZE);
 
     return NLMP_PARSER_OK;
 }
@@ -237,9 +428,7 @@ nlmp_parser_error parse_header_signature(const uint8_t *buffer, size_t len, uint
 nlmp_parser_error parse_header_fields(const uint8_t *buffer, size_t len, header_fields_t *fields) {
     if (!buffer || !fields) return NLMP_PARSER_ERROR_INVALID_ARGS;
 
-    if (len < NLMP_HEADER_FIELDS_STRUCT_DIM) return NLMP_PARSER_ERROR_BUFF_OVERFLOW;
-
-    memset(fields, 0, sizeof(*fields));
+    if (len < NLMP_HEADER_FIELDS_STRUCT_SIZE) return NLMP_PARSER_ERROR_BUFF_OVERFLOW;
 
     nlmp_parser_error res;
     size_t offset = 0;
@@ -261,8 +450,126 @@ nlmp_parser_error parse_header_fields(const uint8_t *buffer, size_t len, header_
     return NLMP_PARSER_OK;
 }
 
+/**
+ * Parsa un messaggio NEGOTIATE_MESSAGE.
+ */
+nlmp_parser_error nlmp_parse_negotiate_message(const uint8_t *buffer, size_t len, size_t *offset, nlmp_msg_t *msg) {
+    if (!buffer || !msg || !offset) return NLMP_PARSER_ERROR_INVALID_ARGS;
 
-nlmp_parser_error nlmp_parse(const uint8_t *buffer, size_t len) {
+    nlmp_parser_error res;
+
+    // Dobbiamo leggere dal buffer l'header, quindi verifichiamo che le letture non 
+    // siano superiori alla lunghezza del buffer
+    if (len < NLMP_NEGOTIATE_MESSAGE_HEADER_SIZE) return NLMP_PARSER_ERROR_BUFF_OVERFLOW;
+
+    // Recuperiamo flags
+    res = read_u32_le(buffer + *offset, len, &msg->header.msg_header.nlmp_negotiate_msg_header.negotiate_flags);
+    if (res < NLMP_PARSER_OK) return res;
+    *offset += sizeof(uint32_t);
+
+    // Recuperiamo campi domain_name_fields
+    if (msg->header.msg_header.nlmp_negotiate_msg_header.negotiate_flags & NTLMSSP_NEGOTIATE_OEM_DOMAIN_SUPPLIED) {
+        res = parse_header_fields(buffer + *offset, len - *offset, &msg->header.msg_header.nlmp_negotiate_msg_header.domain_name_fields);
+        if (res < NLMP_PARSER_OK) return res;
+    } else {
+        msg->header.msg_header.nlmp_negotiate_msg_header.domain_name_fields.buffer_offset = NLMP_NEGOTIATE_MESSAGE_HEADER_SIZE;
+    }
+    *offset += NLMP_HEADER_SIGNATURE_SIZE;
+
+    // Recuperiamo campi workstation_fields
+    if (msg->header.msg_header.nlmp_negotiate_msg_header.negotiate_flags & NTLMSSP_NEGOTIATE_OEM_WORKSTATION_SUPPLIED) {
+        res = parse_header_fields(buffer + *offset, len - *offset, &msg->header.msg_header.nlmp_negotiate_msg_header.workstation_fields);
+        if (res < NLMP_PARSER_OK) return res;
+    } else {
+        msg->header.msg_header.nlmp_negotiate_msg_header.workstation_fields.buffer_offset = NLMP_NEGOTIATE_MESSAGE_HEADER_SIZE;
+    }
+    *offset += NLMP_HEADER_SIGNATURE_SIZE;
+
+    // Recuperiamo campi version
+    if (msg->header.msg_header.nlmp_negotiate_msg_header.negotiate_flags & NTLMSSP_NEGOTIATE_VERSION) {
+        res = read_u64_le(buffer + *offset, len - *offset, &msg->header.msg_header.nlmp_negotiate_msg_header.version);
+        if (res < NLMP_PARSER_OK) return res;
+    } else {
+        msg->header.msg_header.nlmp_negotiate_msg_header.version = 0;
+    }
+    *offset += sizeof(uint64_t);
+
+    // Estraiamo Payload in base alle lunghezze
+
+    // Se offset, dove dovremmo iniziare ad estrarre il payload è uguale alla lunghezza allora non abbiamo payload
+    if (*offset >= len) {
+        msg->payload = NULL;
+        return NLMP_PARSER_OK;
+    }
+
+    // Altrimenti calcolsimao lunghezza payload ed estraiamo
+
+
+    printf("Type: 0x%08x\n", msg->header.message_type);
+    printf("Sign: %s\n", msg->header.signature);
+    printf("Flags: 0x%08x\n", msg->header.msg_header.nlmp_negotiate_msg_header.negotiate_flags);
+    printf("Domain Len: %d, Offset: %d\n", msg->header.msg_header.nlmp_negotiate_msg_header.domain_name_fields.len, msg->header.msg_header.nlmp_negotiate_msg_header.domain_name_fields.buffer_offset);
+    printf("Workst. Len: %d, Offset: %d\n", msg->header.msg_header.nlmp_negotiate_msg_header.workstation_fields.len, msg->header.msg_header.nlmp_negotiate_msg_header.workstation_fields.buffer_offset);
+    printf("Version: 0x%016llx\n", msg->header.msg_header.nlmp_negotiate_msg_header.version);
+
+
+}
+
+nlmp_parser_error nlmp_parse_challenge_message(const uint8_t *buffer, size_t len, nlmp_msg_t *msg) {}
+
+nlmp_parser_error nlmp_parse_authenticate_message(const uint8_t *buffer, size_t len, nlmp_msg_t *msg) {}
+
+
+nlmp_parser_error nlmp_parse(const uint8_t *buffer, size_t len, nlmp_msg_t *msg) {
+    if (!buffer || !msg) return NLMP_PARSER_ERROR_INVALID_ARGS;
+
+    if (len > NLMP_MAX_MSG_DIM) return NLMP_PARSER_ERROR_BUFF_TOO_BIG;
+
+    memset(msg, 0, sizeof(nlmp_msg_t));
+    
+    size_t offset = 0;
+    nlmp_parser_error res;
+
+    // Estraggo signature del protocollo
+    res = parse_header_signature(buffer, len, msg->header.signature);
+    if (res < NLMP_PARSER_OK) return res;
+    offset += NLMP_HEADER_SIGNATURE_SIZE;
+
+    // Verifichiamo se la firma è valida
+    res = check_signature(msg->header.signature);
+    if (res < NLMP_PARSER_OK) return res;
+
+    // Estraggo message type
+    res = read_u32_le(buffer + offset, len - offset, &msg->header.message_type);
+    if (res < NLMP_PARSER_OK) return NLMP_PARSER_OK;
+    offset += sizeof(uint32_t);
+
+    // Verifichaimo se tipo è valido
+    res = check_msg_type(msg->header.message_type);
+    if (res < NLMP_PARSER_OK) return res;
+    
+    // In base al tipo, faccimo il parse del messaggio
+    switch (msg->header.message_type) {
+        case NEGOTIATE_MESSAGE:
+            res = nlmp_parse_negotiate_message(buffer, len, &offset, msg);
+            if (res < NLMP_PARSER_OK) return res;
+            break;
+
+        case CHALLENGE_MESSAGE:
+            res = nlmp_parse_challenge_message(buffer + offset, len - offset, msg);
+            if (res < NLMP_PARSER_OK) return res;
+            break;
+
+        case AUTHENTICATE_MESSAGE:
+            res = nlmp_parse_authenticate_message(buffer + offset, len - offset, msg);
+            if (res < NLMP_PARSER_OK) return res;
+            break;
+        
+        default:
+            return NLMP_PARSER_ERROR_INVALID_MSG_TYPE;
+    }
+
+    return NLMP_PARSER_OK;
 
 }
 
@@ -279,30 +586,16 @@ int main() {
     const uint8_t buffer3[] = {0x02, 0x01, 0x00, 0x00};
 
     nlmp_msg_t msg;
+    nlmp_parser_error res;
     memset(&msg, 0, sizeof(nlmp_msg_t));
 
-    printf("%d\n", sizeof(nlmp_msg_type_t));
-
-    nlmp_parser_error res;
-
-    res = parse_header_signature(buffer1, len, msg.header.signature);
+    res = nlmp_parse(buffer1, 40, &msg);
     if (res < NLMP_PARSER_OK) {
-        printf("Error: 0x%x\n", res);
+        printf("Errore: 0x%x\n", res);
         return 1;
     }
 
-    res = check_signature(msg.header.signature);
-    if (res < NLMP_PARSER_OK) {
-        printf("Error: 0x%x\n", res);
-        return 1;
-    }
-
-    res = parse_header_fields(buffer2, 8, &msg.header.msg_header.nlmp_authenticate_msg_header.domain_name_fields);
-
-    res = parse_header_msg_type(buffer3, 4, &msg.header.message_type);
-
-    printf("---%u\n", msg.header.message_type);
-    printf("%u\n", msg.header.msg_header.nlmp_authenticate_msg_header.domain_name_fields.buffer_offset);
+    printf("OK.\n");
 
 
     
