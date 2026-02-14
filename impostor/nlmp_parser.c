@@ -16,13 +16,14 @@
 #include <string.h>
 
 /* Errori parsing */
-#define NTLM_PARSER_OK                          0x00000000
-#define NTLM_PARSER_ERROR_INVALID_ARGS          0x80000001
-#define NTLM_PARSER_ERROR_INVALID_SIGNATURE     0x80000002
-#define NTLM_PARSER_ERROR_INVALID_MSG_TYPE      0x80000003
-#define NTLM_PARSER_ERROR_BUFF_OVERFLOW         0x80000004
-#define NTLM_PARSER_ERROR_BUFF_TOO_BIG          0x80000005
-#define NTLM_PARSER_ERROR_MALFORMED_MSG         0x80000006
+#define NTLM_PARSER_OK                              0x00000000
+#define NTLM_PARSER_ERROR_INVALID_ARGS              0x80000001
+#define NTLM_PARSER_ERROR_INVALID_SIGNATURE         0x80000002
+#define NTLM_PARSER_ERROR_INVALID_MSG_TYPE          0x80000003
+#define NTLM_PARSER_ERROR_BUFF_OVERFLOW             0x80000004
+#define NTLM_PARSER_ERROR_BUFF_TOO_BIG              0x80000005
+#define NTLM_PARSER_ERROR_MALFORMED_MSG             0x80000006
+#define NTLM_PARSER_ERROR_FREE_INVALID_TYPE_MSG     0x80000007
 
 typedef int32_t ntlm_parser_error;
 
@@ -304,13 +305,128 @@ typedef struct ntlm_buffer_ctx_t {
 } ntlm_buffer_ctx_t;
 
 /******************************************/
-//          Msg and Buffer Utils 
+//          Free function for Msg
 /******************************************/
 
-ntlm_parser_error free_ntlm_msg(ntlm_msg_t msg) {
+ntlm_parser_error free_ntlm_blob(ntlm_blob_t *blob) {
+    if (!blob) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
+    if (blob->data) {
+        free(blob->data);
+    }
+    blob->data = NULL;
+    blob->len = 0;
+
+    return NTLM_PARSER_OK;
 }
 
+ntlm_parser_error free_negotiate_msg(ntlm_msg_t *msg) {
+    if (!msg) return NTLM_PARSER_ERROR_INVALID_ARGS;
+    if (msg->header.message_type != NEGOTIATE_MESSAGE) return NTLM_PARSER_ERROR_FREE_INVALID_TYPE_MSG;
+
+    ntlm_parser_error res;
+
+    // Liberiamo header
+    res = free_ntlm_blob(&msg->header.msg_header.ntlm_negotiate_msg_header.version);
+    if (res < NTLM_PARSER_OK) return res;
+    
+    // Liberiamo Payload
+    res = free_ntlm_blob(&msg->payload.ntlm_negotiate_msg_payload.domain_name);
+    if (res < NTLM_PARSER_OK) return res;
+
+    res = free_ntlm_blob(&msg->payload.ntlm_negotiate_msg_payload.workstation_name);
+    if (res < NTLM_PARSER_OK) return res;
+    
+    // azzeriamo tutto
+    memset(msg, 0, sizeof(*msg));
+
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error free_challenge_msg(ntlm_msg_t *msg) {
+    if (!msg) return NTLM_PARSER_ERROR_INVALID_ARGS;
+    if (msg->header.message_type != CHALLENGE_MESSAGE) return NTLM_PARSER_ERROR_FREE_INVALID_TYPE_MSG;
+
+    ntlm_parser_error res;
+
+    // Liberiamo header
+    res = free_ntlm_blob(&msg->header.msg_header.ntlm_challenge_msg_header.version);
+    if (res < NTLM_PARSER_OK) return res;
+
+    // Liberiamo Payload
+    res = free_ntlm_blob(&msg->payload.ntlm_challenge_msg_payload.target_info);
+    if (res < NTLM_PARSER_OK) return res;
+
+    res = free_ntlm_blob(&msg->payload.ntlm_challenge_msg_payload.target_name);
+    if (res < NTLM_PARSER_OK) return res;
+
+    memset(msg, 0, sizeof(*msg));
+
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error free_authenticate_msg(ntlm_msg_t *msg) {
+    if (!msg) return NTLM_PARSER_ERROR_INVALID_ARGS;
+    if (msg->header.message_type != AUTHENTICATE_MESSAGE) return NTLM_PARSER_ERROR_FREE_INVALID_TYPE_MSG;
+
+    ntlm_parser_error res;
+
+    // Liberiamo header
+    res = free_ntlm_blob(&msg->header.msg_header.ntlm_authenticate_msg_header.version);
+    if (res < NTLM_PARSER_OK) return res;
+
+    // Liberiamo Payload
+    res = free_ntlm_blob(&msg->payload.ntlm_authenticate_msg_payload.domain_name);
+    if (res < NTLM_PARSER_OK) return res;
+
+    res = free_ntlm_blob(&msg->payload.ntlm_authenticate_msg_payload.encrypted_random_session_key);
+    if (res < NTLM_PARSER_OK) return res;
+
+    res = free_ntlm_blob(&msg->payload.ntlm_authenticate_msg_payload.username);
+    if (res < NTLM_PARSER_OK) return res;
+
+    res = free_ntlm_blob(&msg->payload.ntlm_authenticate_msg_payload.workstation_name);
+    if (res < NTLM_PARSER_OK) return res;
+
+    if (msg->payload.ntlm_authenticate_msg_payload.ntlm_response_type == NTLM_RESPONSE_V2) {
+        free_ntlm_blob(&msg->payload.ntlm_authenticate_msg_payload.nt_challenge_response.ntlm_v2_response.ntlm_v2_client_challenge);
+    }
+
+    memset(msg, 0, sizeof(*msg));
+
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error free_ntlm_msg(ntlm_msg_t *msg) {
+    if (!msg) return NTLM_PARSER_ERROR_INVALID_ARGS;
+    ntlm_parser_error res;
+
+    switch (msg->header.message_type) {
+        case NEGOTIATE_MESSAGE:
+            res = free_negotiate_msg(msg);
+            if (res < NTLM_PARSER_OK) return res;
+            break;
+
+        case CHALLENGE_MESSAGE:
+            res = free_challenge_msg(msg);
+            if (res < NTLM_PARSER_OK) return res;
+            break;
+
+        case AUTHENTICATE_MESSAGE:
+            res = free_authenticate_msg(msg);
+            if (res < NTLM_PARSER_OK) return res;
+            break;
+
+        default:
+            return NTLM_PARSER_ERROR_INVALID_MSG_TYPE;
+    }
+
+    return NTLM_PARSER_OK;
+}
+
+/******************************************/
+//                 Utils
+/******************************************/
 
 ntlm_parser_error check_signature(const uint8_t *signature) {
     if (!signature) return NTLM_PARSER_ERROR_INVALID_ARGS;
@@ -331,37 +447,47 @@ ntlm_parser_error check_msg_type(ntlm_msg_type_t type) {
 }
 
 
-/* Funzione che legge da un buffer 2 byte in little endian e li slava come un uint16 */
-nlmp_parser_error read_u16_le(const uint8_t *buffer, size_t len, uint16_t *out) {
-    if (!buffer || !out) return NLMP_PARSER_ERROR_INVALID_ARGS;
+/** Funzione che legge da un buffer 2 byte in little endian e li salva come un uint16.
+ * Bisogna passare alla funzione un puntatore a dove si vuole inziare a leggere
+ * i 2 bytes, e la lunghezza del buffer residua da quel puntatore.
+ */
+ntlm_parser_error read_u16_le(const uint8_t *buffer, size_t len, uint16_t *out) {
+    if (!buffer || !out) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
-    if (len < sizeof(uint16_t)) return NLMP_PARSER_ERROR_BUFF_OVERFLOW;
+    // devo leggere dal buffer 2 byte, controlliamo che la lunghezza residue sia almeno di due byte
+    if (len < sizeof(uint16_t)) return NTLM_PARSER_ERROR_BUFF_OVERFLOW;
     
     *out = (uint32_t)*(buffer)
            | ((uint32_t)*(buffer + 1) << 8);
 
-    return NLMP_PARSER_OK;
+    return NTLM_PARSER_OK;
 }
 
-/* Funzione che legge da un buffer 4 byte in little endian e li slava come un uint32 */
-nlmp_parser_error read_u32_le(const uint8_t *buffer, size_t len, uint32_t *out) {
-    if (!buffer || !out) return NLMP_PARSER_ERROR_INVALID_ARGS;
+/** Funzione che legge da un buffer 4 byte in little endian e li salva come un uint32 
+ * Bisogna passare alla funzione un puntatore a dove si vuole inziare a leggere
+ * i 2 bytes, e la lunghezza del buffer residua da quel puntatore.
+*/
+ntlm_parser_error read_u32_le(const uint8_t *buffer, size_t len, uint32_t *out) {
+    if (!buffer || !out) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
-    if (len < sizeof(uint32_t)) return NLMP_PARSER_ERROR_BUFF_OVERFLOW;
+    if (len < sizeof(uint32_t)) return NTLM_PARSER_ERROR_BUFF_OVERFLOW;
 
     *out = (uint32_t)*(buffer)
            | ((uint32_t)*(buffer + 1) << 8)
            | ((uint32_t)*(buffer + 2) << 16)
            | ((uint32_t)*(buffer + 3) << 24);
 
-    return NLMP_PARSER_OK;
+    return NTLM_PARSER_OK;
 }
 
-/* Funzione che legge da un buffer 8 byte in little endian e li slava come un uint64 */
-nlmp_parser_error read_u64_le(const uint8_t *buffer, size_t len, uint64_t *out) {
-    if (!buffer || !out) return NLMP_PARSER_ERROR_INVALID_ARGS;
+/** Funzione che legge da un buffer 8 byte in little endian e li salva come un uint64.
+ * Bisogna passare alla funzione un puntatore a dove si vuole inziare a leggere
+ * i 2 bytes, e la lunghezza del buffer residua da quel puntatore.
+ */
+ntlm_parser_error read_u64_le(const uint8_t *buffer, size_t len, uint64_t *out) {
+    if (!buffer || !out) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
-    if (len < sizeof(uint64_t)) return NLMP_PARSER_ERROR_BUFF_OVERFLOW;
+    if (len < sizeof(uint64_t)) return NTLM_PARSER_ERROR_BUFF_OVERFLOW;
 
     *out = (uint64_t)*(buffer)
            | ((uint64_t)*(buffer + 1) << 8)
@@ -372,7 +498,7 @@ nlmp_parser_error read_u64_le(const uint8_t *buffer, size_t len, uint64_t *out) 
            | ((uint64_t)*(buffer + 6) << 48)
            | ((uint64_t)*(buffer + 7) << 56);
 
-    return NLMP_PARSER_OK;
+    return NTLM_PARSER_OK;
 }
 
 
