@@ -44,7 +44,7 @@ typedef int32_t ntlm_parser_error;
 #define NTLM_V2_RESPONSE_SIZE                   16              // 16 Bytes
 #define NTLM_RESPONSE_SIZE                      24              // 24 Bytes
 
-#define LM_V2_RESPONSE_SIZE                     24              // 24 Bytes
+#define LM_V2_RESPONSE_SIZE                     16              // 16 Bytes
 #define LM_RESPONSE_SIZE                        24              // 24 Bytes
 
 /* Tipi messaggi NTLM */
@@ -432,8 +432,7 @@ ntlm_parser_error free_ntlm_msg(ntlm_msg_t *msg) {
 /******************************************/
 
 ntlm_parser_error init_ntlm_ctx_buffer(const uint8_t *buffer, size_t len, ntlm_buffer_ctx_t *out) {
-    if (!buffer || !out) return NTLM_PARSER_ERROR_INVALID_ARGS;
-    if (!out->buf) return NTLM_PARSER_ERROR_INVALID_CTX_BUFFER;
+    if (!buffer || !*buffer || !out) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
     out->buf = buffer;
     out->size = len;
@@ -442,17 +441,31 @@ ntlm_parser_error init_ntlm_ctx_buffer(const uint8_t *buffer, size_t len, ntlm_b
     return NTLM_PARSER_OK;
 }
 
-ntlm_parser_error safe_ctx_buffer_read(ntlm_buffer_ctx_t *ctx_buffer, size_t bytes_to_read) {
+ntlm_parser_error valid_ctx_buffer(ntlm_buffer_ctx_t *ctx_buffer) {
     if (!ctx_buffer) return NTLM_PARSER_ERROR_INVALID_ARGS;
     if (!ctx_buffer->buf) return NTLM_PARSER_ERROR_INVALID_CTX_BUFFER;
 
+    if (ctx_buffer->offset > ctx_buffer->size) return NTLM_PARSER_ERROR_INVALID_CTX_BUFFER;
+
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error safe_ctx_buffer_read(ntlm_buffer_ctx_t *ctx_buffer, size_t bytes_to_read) {
+    if (!ctx_buffer) return NTLM_PARSER_ERROR_INVALID_ARGS;
+    
+    ntlm_parser_error res;
+    if ((res = valid_ctx_buffer(ctx_buffer)) < NTLM_PARSER_OK) return res;
+
     // Verifichaimo se la read è safe
-    if (ctx_buffer->offset > ctx_buffer->size || ctx_buffer->offset + bytes_to_read > ctx_buffer->size) 
-        return NTLM_PARSER_ERROR_READ_OVERFLOW;
+    if (bytes_to_read > ctx_buffer->size - ctx_buffer->offset 
+        || ctx_buffer->offset + bytes_to_read > ctx_buffer->size) return NTLM_PARSER_ERROR_READ_OVERFLOW;
     
     return NTLM_PARSER_OK;
 }
 
+/**
+ * Fa un check anche per vedere se ctx_buffer è safe. Verifica se la lettura è safe anche.
+ */
 ntlm_parser_error read_u16_le(ntlm_buffer_ctx_t *ctx_buffer, uint16_t *out) {
     if (!ctx_buffer || !out) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
@@ -503,6 +516,73 @@ ntlm_parser_error read_u64_le(ntlm_buffer_ctx_t *ctx_buffer, uint32_t *out) {
     return NTLM_PARSER_OK;
 }
 
+ntlm_parser_error safe_incr_ctx_buff_offset(ntlm_buffer_ctx_t *ctx_buffer, size_t incr) {
+    if (!ctx_buffer) return NTLM_PARSER_ERROR_INVALID_ARGS;
+
+    ntlm_parser_error res;
+    if ((res = valid_ctx_buffer(ctx_buffer)) < NTLM_PARSER_OK) return res;
+
+    if (incr > ctx_buffer->size - ctx_buffer->offset 
+        || ctx_buffer->offset + incr > ctx_buffer->size) return NTLM_PARSER_ERROR_OFFSET_OVERFLOW;
+
+    ctx_buffer->offset += incr;
+
+    return NTLM_PARSER_OK;
+}
+
+/******************************************/
+//        Utils header_fields struct
+/******************************************/
+
+/**
+ * Valida un header_fields dato un ctx_buffer
+ */
+ntlm_parser_error valid_header_fields(ntlm_buffer_ctx_t *ctx_buffer, header_fields_t *fields) {
+    if (!ctx_buffer || !fields) return NTLM_PARSER_ERROR_INVALID_ARGS;
+    
+    ntlm_parser_error res;
+    if ((res = valid_ctx_buffer(ctx_buffer)) < NTLM_PARSER_OK) return res;
+
+    if (fields->len > NTLM_BLOB_MAX_LEN) return NTLM_PARSER_ERROR_MAX_LEN_BLOB_EXEEDED;
+    if (fields->max_len > NTLM_BLOB_MAX_LEN) return NTLM_PARSER_ERROR_MAX_LEN_BLOB_EXEEDED;
+    if (fields->buffer_offset > ctx_buffer->size) return NTLM_PARSER_ERROR_OFFSET_OVERFLOW;
+
+    // Verificare che len + offset non vada in overflow
+    if (fields->buffer_offset + fields->len > ctx_buffer->size) return NTLM_PARSER_ERROR_BUFF_OVERFLOW;
+
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error parse_header_fields(ntlm_buffer_ctx_t *ctx_buffer, header_fields_t *fields) {
+    if (!ctx_buffer || !fields) return NTLM_PARSER_ERROR_INVALID_ARGS;
+
+    ntlm_parser_error res;
+    size_t org_offset = ctx_buffer->offset;
+
+    // Leggiamo e verifichaimo Len
+    if ((res = safe_ctx_buffer_read(ctx_buffer, sizeof(fields->len))) < NTLM_PARSER_OK) return res;
+    if ((res = read_u16_le(ctx_buffer, &fields->len)) < NTLM_PARSER_OK) return res;
+    
+    ctx_buffer->offset += sizeof(fields->len);
+
+    // Leggiamo e verifichaimo MaxLen
+    if ((res = safe_ctx_buffer_read(ctx_buffer, sizeof(fields->max_len))) < NTLM_PARSER_OK) return res;
+    if ((res = read_u16_le(ctx_buffer, &fields->max_len)) < NTLM_PARSER_OK) return res;
+    
+    ctx_buffer->offset += sizeof(fields->len);
+
+    // Leggiamo e verifichiamo BufferOffset
+    if ((res = safe_ctx_buffer_read(ctx_buffer, sizeof(fields->buffer_offset))) < NTLM_PARSER_OK) return res;
+    if ((res = read_u32_le(ctx_buffer, &fields->buffer_offset)) < NTLM_PARSER_OK) return res;
+    
+    ctx_buffer->offset += sizeof(fields->len);
+
+    if ((res = valid_header_fields(ctx_buffer, fields)) < NTLM_PARSER_OK) return res;
+
+    ctx_buffer->offset = org_offset;
+    return NTLM_PARSER_OK;
+}
+
 /******************************************/
 //                Utils 
 /******************************************/
@@ -527,7 +607,7 @@ ntlm_parser_error check_msg_type(ntlm_msg_type_t type) {
 
 
 /******************************************/
-//             Parse Functions
+//             Parser Utils
 /******************************************/
 
 ntlm_parser_error init_ntlm_blob(ntlm_blob_t *blob, size_t dim) {
@@ -550,65 +630,68 @@ ntlm_parser_error init_ntlm_blob(ntlm_blob_t *blob, size_t dim) {
     return NTLM_PARSER_OK;
 }
 
-ntlm_parser_error parse_header_fields(ntlm_buffer_ctx_t *ctx_buffer, header_fields_t *fields) {
-    if (!ctx_buffer || !fields) return NTLM_PARSER_ERROR_INVALID_ARGS;
-    if (!ctx_buffer->buf) return NTLM_PARSER_ERROR_INVALID_CTX_BUFFER;
+/**
+ * Fa anche un check dei parametri se sono safe e validi
+ */
+ntlm_parser_error parse_payload(ntlm_buffer_ctx_t *ctx_buffer, header_fields_t *header, ntlm_blob_t *blob) {
+    if (!ctx_buffer || !header || !blob) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
     ntlm_parser_error res;
-    size_t org_offset = ctx_buffer->offset;
+    if ((res = valid_ctx_buffer(ctx_buffer)) < NTLM_PARSER_OK) return res;
+    if ((res = valid_header_fields(ctx_buffer, header)) < NTLM_PARSER_OK) return res;
 
-    // Leggiamo e verifichaimo Len
-    if ((res = safe_ctx_buffer_read(ctx_buffer, sizeof(fields->len))) < NTLM_PARSER_OK) return res;
-    if ((res = read_u16_le(ctx_buffer, &fields->len)) < NTLM_PARSER_OK) return res;
-    if (fields->len > NTLM_BLOB_MAX_LEN) return NTLM_PARSER_ERROR_MAX_LEN_BLOB_EXEEDED;
-    ctx_buffer->offset += sizeof(fields->len);
+    if (blob->data) {
+        free(blob->data);
+        blob->len = 0;
+        blob->data = NULL;
+    }
 
-    // Leggiamo e verifichaimo MaxLen
-    if ((res = safe_ctx_buffer_read(ctx_buffer, sizeof(fields->max_len))) < NTLM_PARSER_OK) return res;
-    if ((res = read_u16_le(ctx_buffer, &fields->max_len)) < NTLM_PARSER_OK) return res;
-    if (fields->max_len > NTLM_BLOB_MAX_LEN) return NTLM_PARSER_ERROR_MAX_LEN_BLOB_EXEEDED;
-    ctx_buffer->offset += sizeof(fields->len);
+    blob->data = malloc(sizeof(uint8_t) * header->len);
+    blob->len = header->len;
 
-    // Leggiamo e verifichiamo BufferOffset
-    if ((res = safe_ctx_buffer_read(ctx_buffer, sizeof(fields->buffer_offset))) < NTLM_PARSER_OK) return res;
-    if ((res = read_u32_le(ctx_buffer, &fields->buffer_offset)) < NTLM_PARSER_OK) return res;
-    if (fields->buffer_offset > ctx_buffer->size) return NTLM_PARSER_ERROR_OFFSET_OVERFLOW;
-    ctx_buffer->offset += sizeof(fields->len);
+    memcpy(blob->data, ctx_buffer->buf + header->buffer_offset, header->len);
 
-    // Verificare che len + offset non vada in overflow
-    if (fields->buffer_offset + fields->len > ctx_buffer->size) return NTLM_PARSER_ERROR_BUFF_OVERFLOW;
-
-    ctx_buffer->offset = org_offset;
     return NTLM_PARSER_OK;
 }
 
-/**
- * Parsa un messaggio NEGOTIATE_MESSAGE.
- */
+
 ntlm_parser_error nlmp_parse_negotiate_message(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {}
 
 ntlm_parser_error nlmp_parse_challenge_message(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {}
 
 ntlm_parser_error nlmp_parse_authenticate_message(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {}
 
+/******************************************/
+//            Main Parser 
+/******************************************/
+
 /**
  * Inizializza msg a 0 per sicurezza.
  */
 ntlm_parser_error nlmp_parse(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {
     if (!ctx_buffer || !msg) return NTLM_PARSER_ERROR_INVALID_ARGS;
-    if (!ctx_buffer->buf) return NTLM_PARSER_ERROR_INVALID_CTX_BUFFER;
+
+    ntlm_parser_error res;
+    if ((res = valid_ctx_buffer(ctx_buffer)) < NTLM_PARSER_OK) return res;
 
     // Resetta msg
     memset(msg, 0, sizeof(ntlm_msg_t));
 
     // Leggiamo signature
+    if ((res = safe_ctx_buffer_read(ctx_buffer, NTLM_HEADER_SIGNATURE_SIZE)) < NTLM_PARSER_OK) return res;
+    memcpy(msg->header.signature, ctx_buffer->buf + ctx_buffer->offset, NTLM_HEADER_SIGNATURE_SIZE);
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, NTLM_HEADER_SIGNATURE_SIZE)) < NTLM_PARSER_OK) return res;
+    
+    // Verifichiamo signature
+    if ((res = check_signature(msg->header.signature)) < NTLM_PARSER_OK) return res;
 
-    //Leggiamo type
+    // Leggiamo type
+
 
     // In base al tipo
     // Leggiamo campi header
 
-    // Una volta 
+    // Una volta fatto parse header facciamo parse payload
     
 }
 
@@ -623,6 +706,7 @@ int main() {
     const uint8_t buffer2[] = {0x01, 0x01, 0x08, 0x00, 0x02, 0x01, 0x00, 0x00};
 
     const uint8_t buffer3[] = {0x02, 0x01, 0x00, 0x00};
+
 
     ntlm_msg_t msg;
     ntlm_parser_error res;
