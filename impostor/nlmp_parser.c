@@ -689,9 +689,8 @@ uint8_t is_mic_present(uint8_t *mic) {
     return is_vector_empty(mic, NTLM_HEADER_MIC_SIZE);
 }
 
-
 /******************************************/
-//            Main Parser 
+//             Parse Header 
 /******************************************/
 
 ntlm_parser_error nlmp_parse_negotiate_message_header(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {
@@ -817,6 +816,38 @@ ntlm_parser_error nlmp_parse_authenticate_message_header(ntlm_buffer_ctx_t *ctx_
     return NTLM_PARSER_OK;
 }
 
+ntlm_parser_error nlmp_parse_message_header(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {
+    if (!ctx_buffer || !msg) return NTLM_PARSER_ERROR_INVALID_ARGS;
+    ntlm_parser_error res;
+
+    switch (msg->header.message_type) {
+        case NEGOTIATE_MESSAGE:
+            res = nlmp_parse_negotiate_message_header(ctx_buffer, msg);
+            if (res < NTLM_PARSER_OK) return res;
+            break;
+        
+        case CHALLENGE_MESSAGE:
+            res = nlmp_parse_challenge_message_header(ctx_buffer, msg);
+            if (res < NTLM_PARSER_OK) return res;
+            break;
+
+        case AUTHENTICATE_MESSAGE:
+            res = nlmp_parse_authenticate_message_header(ctx_buffer, msg);
+            if (res < NTLM_PARSER_OK) return res;
+            break;
+        
+        default:
+            return NTLM_PARSER_ERROR_INVALID_MSG_TYPE;
+    }
+
+    return NTLM_PARSER_OK;
+}
+
+
+/******************************************/
+//           Parse Payload 
+/******************************************/
+
 ntlm_parser_error nlmp_parse_negotiate_message_payload(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {
     if (!ctx_buffer || !msg) return NTLM_PARSER_ERROR_INVALID_ARGS;
     ntlm_parser_error res;
@@ -834,6 +865,35 @@ ntlm_parser_error nlmp_parse_negotiate_message_payload(ntlm_buffer_ctx_t *ctx_bu
 
 ntlm_parser_error nlmp_parse_challenge_message_payload(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {}
 ntlm_parser_error nlmp_parse_authenticate_message_payload(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {}
+
+ntlm_parser_error nlmp_parse_message_payload(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {
+    if (!ctx_buffer || !msg) return NTLM_PARSER_ERROR_INVALID_ARGS;
+    ntlm_parser_error res;
+
+    switch (msg->header.message_type) {
+        case NEGOTIATE_MESSAGE:
+            res = nlmp_parse_negotiate_message_payload(ctx_buffer, msg);
+            if (res < NTLM_PARSER_OK) return res;
+            break;
+        
+        case CHALLENGE_MESSAGE:
+            
+            break;
+
+        case AUTHENTICATE_MESSAGE:
+            
+            break;
+        
+        default:
+            return NTLM_PARSER_ERROR_INVALID_MSG_TYPE;
+    }
+
+    return NTLM_PARSER_OK;
+}
+
+/******************************************/
+//             Main Parse 
+/******************************************/
 
 /**
  * Inizializza msg a 0 per sicurezza.
@@ -863,28 +923,11 @@ ntlm_parser_error ntlm_parse(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {
     
     // In base al tipo
     // Leggiamo campi header
-    switch (msg->header.message_type) {
-        case NEGOTIATE_MESSAGE:
-            res = nlmp_parse_negotiate_message_header(ctx_buffer, msg);
-            if (res < NTLM_PARSER_OK) return res;
+    res = nlmp_parse_message_header(ctx_buffer, msg);
+    if (res < NTLM_PARSER_OK) return res;
 
-            res = nlmp_parse_negotiate_message_payload(ctx_buffer, msg);
-            if (res < NTLM_PARSER_OK) return res;
-            break;
-        
-        case CHALLENGE_MESSAGE:
-            res = nlmp_parse_challenge_message_header(ctx_buffer, msg);
-            if (res < NTLM_PARSER_OK) return res;
-            break;
-
-        case AUTHENTICATE_MESSAGE:
-            res = nlmp_parse_authenticate_message_header(ctx_buffer, msg);
-            if (res < NTLM_PARSER_OK) return res;
-            break;
-        
-        default:
-            return NTLM_PARSER_ERROR_INVALID_MSG_TYPE;
-    }
+    res = nlmp_parse_message_payload(ctx_buffer, msg);
+    if (res < NTLM_PARSER_OK) return res;
 
     return NTLM_PARSER_OK;
 }
@@ -921,7 +964,7 @@ int main() {
     ntlm_parser_error res;
 
     ntlm_buffer_ctx_t ctx_buff;
-    res = init_ntlm_ctx_buffer(buffer4, 218, &ctx_buff);
+    res = init_ntlm_ctx_buffer(buffer1, 40, &ctx_buff);
 
     res = ntlm_parse(&ctx_buff, &msg);
     if (res < NTLM_PARSER_OK) {
@@ -1079,7 +1122,7 @@ int main() {
 
     printf("OK.\n");
 
-
+    free_ntlm_msg(&msg);
     
 
 }
