@@ -39,6 +39,8 @@ typedef int32_t ntlm_parser_error;
 #define NTLM_HEADER_SIGNATURE_SIZE              8               // 8 Bytes
 #define NTLM_HEADER_MIC_SIZE                    16              // 16 Bytes
 #define NTLM_BLOB_MAX_LEN                       (4 * 1024)      // 4 KB
+#define NTLM_HEADER_FIELDS_SIZE                 8
+#define NTLM_HEADER_VERSION_SIZE                8
 
 
 #define NTLM_V2_RESPONSE_SIZE                   16              // 16 Bytes
@@ -238,13 +240,13 @@ typedef struct ntlm_response_t {
     uint8_t response[NTLM_RESPONSE_SIZE];
 } ntlm_response_t;
 
-// In totlae 24 Bytes
+// In totale 24 Bytes
 typedef struct lm_v2_response_t {
     uint8_t response[LM_V2_RESPONSE_SIZE];
     uint64_t challenge_from_client;
 } lm_v2_response_t;
 
-// In totlae 24 Bytes
+// In totale 24 Bytes
 typedef struct lm_response_t {
     uint8_t response[LM_RESPONSE_SIZE];
 } lm_response_t;
@@ -450,6 +452,21 @@ ntlm_parser_error valid_ctx_buffer(ntlm_buffer_ctx_t *ctx_buffer) {
     return NTLM_PARSER_OK;
 }
 
+ntlm_parser_error safe_incr_ctx_buff_offset(ntlm_buffer_ctx_t *ctx_buffer, size_t incr) {
+    if (!ctx_buffer) return NTLM_PARSER_ERROR_INVALID_ARGS;
+
+    ntlm_parser_error res;
+    if ((res = valid_ctx_buffer(ctx_buffer)) < NTLM_PARSER_OK) return res;
+
+    if (incr > ctx_buffer->size - ctx_buffer->offset 
+        || ctx_buffer->offset + incr > ctx_buffer->size) return NTLM_PARSER_ERROR_OFFSET_OVERFLOW;
+
+    ctx_buffer->offset += incr;
+
+    return NTLM_PARSER_OK;
+}
+
+
 ntlm_parser_error safe_ctx_buffer_read(ntlm_buffer_ctx_t *ctx_buffer, size_t bytes_to_read) {
     if (!ctx_buffer) return NTLM_PARSER_ERROR_INVALID_ARGS;
     
@@ -460,6 +477,22 @@ ntlm_parser_error safe_ctx_buffer_read(ntlm_buffer_ctx_t *ctx_buffer, size_t byt
     if (bytes_to_read > ctx_buffer->size - ctx_buffer->offset 
         || ctx_buffer->offset + bytes_to_read > ctx_buffer->size) return NTLM_PARSER_ERROR_READ_OVERFLOW;
     
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error read_u32(ntlm_buffer_ctx_t *ctx_buffer, uint32_t *out) {
+    if (!ctx_buffer || !out) return NTLM_PARSER_ERROR_INVALID_ARGS;
+
+    ntlm_parser_error res;
+    // devo leggere dal buffer 4 byte, controlliamo che la lunghezza residue sia almeno di due byte
+    if ((res = safe_ctx_buffer_read(ctx_buffer, sizeof(uint32_t))) < NTLM_PARSER_OK) return res;
+
+    size_t offset = ctx_buffer->offset;
+    *out = ((uint32_t)ctx_buffer->buf[offset] << 24)
+           | ((uint32_t)ctx_buffer->buf[offset + 1] << 16)
+           | ((uint32_t)ctx_buffer->buf[offset + 2] << 8)
+           | (uint32_t)ctx_buffer->buf[offset + 3];
+
     return NTLM_PARSER_OK;
 }
 
@@ -496,7 +529,7 @@ ntlm_parser_error read_u32_le(ntlm_buffer_ctx_t *ctx_buffer, uint32_t *out) {
     return NTLM_PARSER_OK;
 }
 
-ntlm_parser_error read_u64_le(ntlm_buffer_ctx_t *ctx_buffer, uint32_t *out) {
+ntlm_parser_error read_u64_le(ntlm_buffer_ctx_t *ctx_buffer, uint64_t *out) {
     if (!ctx_buffer || !out) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
     ntlm_parser_error res;
@@ -512,20 +545,6 @@ ntlm_parser_error read_u64_le(ntlm_buffer_ctx_t *ctx_buffer, uint32_t *out) {
            | ((uint64_t)ctx_buffer->buf[offset + 5] << 40)
            | ((uint64_t)ctx_buffer->buf[offset + 6] << 48)
            | ((uint64_t)ctx_buffer->buf[offset + 7] << 56);
-
-    return NTLM_PARSER_OK;
-}
-
-ntlm_parser_error safe_incr_ctx_buff_offset(ntlm_buffer_ctx_t *ctx_buffer, size_t incr) {
-    if (!ctx_buffer) return NTLM_PARSER_ERROR_INVALID_ARGS;
-
-    ntlm_parser_error res;
-    if ((res = valid_ctx_buffer(ctx_buffer)) < NTLM_PARSER_OK) return res;
-
-    if (incr > ctx_buffer->size - ctx_buffer->offset 
-        || ctx_buffer->offset + incr > ctx_buffer->size) return NTLM_PARSER_ERROR_OFFSET_OVERFLOW;
-
-    ctx_buffer->offset += incr;
 
     return NTLM_PARSER_OK;
 }
@@ -569,13 +588,13 @@ ntlm_parser_error parse_header_fields(ntlm_buffer_ctx_t *ctx_buffer, header_fiel
     if ((res = safe_ctx_buffer_read(ctx_buffer, sizeof(fields->max_len))) < NTLM_PARSER_OK) return res;
     if ((res = read_u16_le(ctx_buffer, &fields->max_len)) < NTLM_PARSER_OK) return res;
     
-    ctx_buffer->offset += sizeof(fields->len);
+    ctx_buffer->offset += sizeof(fields->max_len);
 
     // Leggiamo e verifichiamo BufferOffset
     if ((res = safe_ctx_buffer_read(ctx_buffer, sizeof(fields->buffer_offset))) < NTLM_PARSER_OK) return res;
     if ((res = read_u32_le(ctx_buffer, &fields->buffer_offset)) < NTLM_PARSER_OK) return res;
     
-    ctx_buffer->offset += sizeof(fields->len);
+    ctx_buffer->offset += sizeof(fields->buffer_offset);
 
     if ((res = valid_header_fields(ctx_buffer, fields)) < NTLM_PARSER_OK) return res;
 
@@ -654,21 +673,172 @@ ntlm_parser_error parse_payload(ntlm_buffer_ctx_t *ctx_buffer, header_fields_t *
     return NTLM_PARSER_OK;
 }
 
+uint8_t is_vector_empty(uint8_t *v, size_t size) {
+    size_t sum = 0;
+    for (int i = 0; i < size; i++)
+        sum |= v[i];
+    
+    return sum == 0 ? 0 : 1;
+}
 
-ntlm_parser_error nlmp_parse_negotiate_message(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {}
+uint8_t is_version_present(uint8_t *version) {
+    return is_vector_empty(version, NTLM_HEADER_VERSION_SIZE);
+}
 
-ntlm_parser_error nlmp_parse_challenge_message(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {}
+uint8_t is_mic_present(uint8_t *mic) {
+    return is_vector_empty(mic, NTLM_HEADER_MIC_SIZE);
+}
 
-ntlm_parser_error nlmp_parse_authenticate_message(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {}
 
 /******************************************/
 //            Main Parser 
 /******************************************/
 
+ntlm_parser_error nlmp_parse_negotiate_message_header(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {
+    if (!ctx_buffer || !msg) return NTLM_PARSER_ERROR_INVALID_ARGS;
+    ntlm_parser_error res;
+    
+    // Leggiamo negFlags
+    if ((res = safe_ctx_buffer_read(ctx_buffer, sizeof(msg->header.msg_header.ntlm_negotiate_msg_header.negotiate_flags))) < NTLM_PARSER_OK) return res;
+    if ((res = read_u32_le(ctx_buffer, &msg->header.msg_header.ntlm_negotiate_msg_header.negotiate_flags)) < NTLM_PARSER_OK) return res;
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, sizeof(msg->header.msg_header.ntlm_negotiate_msg_header.negotiate_flags))) < NTLM_PARSER_OK) return res;
+
+    // Leggiamo DomainNameFields
+    if ((res = parse_header_fields(ctx_buffer, &msg->header.msg_header.ntlm_negotiate_msg_header.domain_name_fields)) < NTLM_PARSER_OK) return res;
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, NTLM_HEADER_FIELDS_SIZE)) < NTLM_PARSER_OK) return res;
+    
+    // Leggiamo WorkstationFields
+    if ((res = parse_header_fields(ctx_buffer, &msg->header.msg_header.ntlm_negotiate_msg_header.workstation_fields)) < NTLM_PARSER_OK) return res;
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, NTLM_HEADER_FIELDS_SIZE)) < NTLM_PARSER_OK) return res;
+
+    // Leggiamo Version
+    if ((res = safe_ctx_buffer_read(ctx_buffer, NTLM_HEADER_VERSION_SIZE)) < NTLM_PARSER_OK) return res;
+    res = init_ntlm_blob(&msg->header.msg_header.ntlm_negotiate_msg_header.version, NTLM_HEADER_VERSION_SIZE);
+    memcpy(msg->header.msg_header.ntlm_negotiate_msg_header.version.data, ctx_buffer->buf + ctx_buffer->offset, NTLM_HEADER_VERSION_SIZE);
+
+    if (is_version_present(msg->header.msg_header.ntlm_negotiate_msg_header.version.data))
+        msg->header.msg_header.ntlm_negotiate_msg_header.version_present = 1;
+    
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, NTLM_HEADER_VERSION_SIZE)) < NTLM_PARSER_OK) return res;
+    
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error nlmp_parse_challenge_message_header(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {
+    if (!ctx_buffer || !msg) return NTLM_PARSER_ERROR_INVALID_ARGS;
+    ntlm_parser_error res;
+
+    // Leggiamo TargetNameFields
+    if ((res = parse_header_fields(ctx_buffer, &msg->header.msg_header.ntlm_challenge_msg_header.target_name_fields)) < NTLM_PARSER_OK) return res;
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, NTLM_HEADER_FIELDS_SIZE)) < NTLM_PARSER_OK) return res;
+
+    // Leggiamo negFlags
+    if ((res = safe_ctx_buffer_read(ctx_buffer, sizeof(msg->header.msg_header.ntlm_challenge_msg_header.negotiate_flags))) < NTLM_PARSER_OK) return res;
+    if ((res = read_u32_le(ctx_buffer, &msg->header.msg_header.ntlm_challenge_msg_header.negotiate_flags)) < NTLM_PARSER_OK) return res;
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, sizeof(msg->header.msg_header.ntlm_challenge_msg_header.negotiate_flags))) < NTLM_PARSER_OK) return res;
+
+    // Leggiamo ServerChallenge
+    if ((res = safe_ctx_buffer_read(ctx_buffer, sizeof(msg->header.msg_header.ntlm_challenge_msg_header.server_challenge))) < NTLM_PARSER_OK) return res;
+    if ((res = read_u64_le(ctx_buffer, &msg->header.msg_header.ntlm_challenge_msg_header.server_challenge)) < NTLM_PARSER_OK) return res;
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, sizeof(msg->header.msg_header.ntlm_challenge_msg_header.server_challenge))) < NTLM_PARSER_OK) return res;
+
+    // Riempiamo Reserved
+    memset(msg->header.msg_header.ntlm_challenge_msg_header.reserved, 0, 8);
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, 8)) < NTLM_PARSER_OK) return res;
+
+    // Leggiamo TargetInfoFields
+    if ((res = parse_header_fields(ctx_buffer, &msg->header.msg_header.ntlm_challenge_msg_header.target_info_fields)) < NTLM_PARSER_OK) return res;
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, NTLM_HEADER_FIELDS_SIZE)) < NTLM_PARSER_OK) return res;
+
+    // Leggiamo Version
+    if ((res = safe_ctx_buffer_read(ctx_buffer, NTLM_HEADER_VERSION_SIZE)) < NTLM_PARSER_OK) return res;
+    res = init_ntlm_blob(&msg->header.msg_header.ntlm_challenge_msg_header.version, NTLM_HEADER_VERSION_SIZE);
+    memcpy(msg->header.msg_header.ntlm_challenge_msg_header.version.data, ctx_buffer->buf + ctx_buffer->offset, NTLM_HEADER_VERSION_SIZE);
+
+    if (is_version_present(msg->header.msg_header.ntlm_challenge_msg_header.version.data))
+        msg->header.msg_header.ntlm_challenge_msg_header.version_present = 1;
+
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, NTLM_HEADER_VERSION_SIZE)) < NTLM_PARSER_OK) return res;
+        
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error nlmp_parse_authenticate_message_header(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {
+    if (!ctx_buffer || !msg) return NTLM_PARSER_ERROR_INVALID_ARGS;
+    ntlm_parser_error res;
+
+    // Leggiamo LmChallengeResponseFields
+    if ((res = parse_header_fields(ctx_buffer, &msg->header.msg_header.ntlm_authenticate_msg_header.lm_challenge_resp_fields)) < NTLM_PARSER_OK) return res;
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, NTLM_HEADER_FIELDS_SIZE)) < NTLM_PARSER_OK) return res;
+
+    // Leggiamo NtChallengeResponseFields
+    if ((res = parse_header_fields(ctx_buffer, &msg->header.msg_header.ntlm_authenticate_msg_header.nt_challenge_resp_fields)) < NTLM_PARSER_OK) return res;
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, NTLM_HEADER_FIELDS_SIZE)) < NTLM_PARSER_OK) return res;
+
+    // Leggiamo DomainNameFields
+    if ((res = parse_header_fields(ctx_buffer, &msg->header.msg_header.ntlm_authenticate_msg_header.domain_name_fields)) < NTLM_PARSER_OK) return res;
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, NTLM_HEADER_FIELDS_SIZE)) < NTLM_PARSER_OK) return res;
+
+    // Leggiamo UserNameFields
+    if ((res = parse_header_fields(ctx_buffer, &msg->header.msg_header.ntlm_authenticate_msg_header.username_fields)) < NTLM_PARSER_OK) return res;
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, NTLM_HEADER_FIELDS_SIZE)) < NTLM_PARSER_OK) return res;
+
+    // Leggiamo WorkstationFields
+    if ((res = parse_header_fields(ctx_buffer, &msg->header.msg_header.ntlm_authenticate_msg_header.workstation_fields)) < NTLM_PARSER_OK) return res;
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, NTLM_HEADER_FIELDS_SIZE)) < NTLM_PARSER_OK) return res;
+
+    // Leggiamo EncryptedRandomSessionKeyFields
+    if ((res = parse_header_fields(ctx_buffer, &msg->header.msg_header.ntlm_authenticate_msg_header.encrypted_random_session_key_fields)) < NTLM_PARSER_OK) return res;
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, NTLM_HEADER_FIELDS_SIZE)) < NTLM_PARSER_OK) return res;
+
+    // Leggiamo NegotiateFlags
+    if ((res = safe_ctx_buffer_read(ctx_buffer, sizeof(msg->header.msg_header.ntlm_authenticate_msg_header.negotiate_flags))) < NTLM_PARSER_OK) return res;
+    if ((res = read_u32_le(ctx_buffer, &msg->header.msg_header.ntlm_authenticate_msg_header.negotiate_flags)) < NTLM_PARSER_OK) return res;
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, sizeof(msg->header.msg_header.ntlm_authenticate_msg_header.negotiate_flags))) < NTLM_PARSER_OK) return res;
+
+    // Leggiamo Version
+    if ((res = safe_ctx_buffer_read(ctx_buffer, NTLM_HEADER_VERSION_SIZE)) < NTLM_PARSER_OK) return res;
+    res = init_ntlm_blob(&msg->header.msg_header.ntlm_authenticate_msg_header.version, NTLM_HEADER_VERSION_SIZE);
+    memcpy(msg->header.msg_header.ntlm_authenticate_msg_header.version.data, ctx_buffer->buf + ctx_buffer->offset, NTLM_HEADER_VERSION_SIZE);
+
+    if (is_version_present(msg->header.msg_header.ntlm_authenticate_msg_header.version.data))
+        msg->header.msg_header.ntlm_authenticate_msg_header.version_present = 1;
+    
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, NTLM_HEADER_VERSION_SIZE)) < NTLM_PARSER_OK) return res;
+
+    //Leggiamo MIC
+    if ((res = safe_ctx_buffer_read(ctx_buffer, NTLM_HEADER_MIC_SIZE)) < NTLM_PARSER_OK) return res;
+    memcpy(msg->header.msg_header.ntlm_authenticate_msg_header.mic, ctx_buffer->buf + ctx_buffer->offset, NTLM_HEADER_MIC_SIZE);
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, NTLM_HEADER_MIC_SIZE)) < NTLM_PARSER_OK) return res;
+    
+    if (!is_mic_present(msg->header.msg_header.ntlm_authenticate_msg_header.mic))
+        msg->header.msg_header.ntlm_authenticate_msg_header.mic_present = 1;
+    
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error nlmp_parse_negotiate_message_payload(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {
+    if (!ctx_buffer || !msg) return NTLM_PARSER_ERROR_INVALID_ARGS;
+    ntlm_parser_error res;
+
+    // Leggiamo DomainName Payload
+    res = parse_payload(ctx_buffer, &msg->header.msg_header.ntlm_negotiate_msg_header.domain_name_fields, &msg->payload.ntlm_negotiate_msg_payload.domain_name);
+    if (res < NTLM_PARSER_OK) return res;
+    
+    // Leggiamo WorkstationName Payload
+    res = parse_payload(ctx_buffer, &msg->header.msg_header.ntlm_negotiate_msg_header.workstation_fields, &msg->payload.ntlm_negotiate_msg_payload.workstation_name);
+    if (res < NTLM_PARSER_OK) return res;
+
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error nlmp_parse_challenge_message_payload(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {}
+ntlm_parser_error nlmp_parse_authenticate_message_payload(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {}
+
 /**
  * Inizializza msg a 0 per sicurezza.
  */
-ntlm_parser_error nlmp_parse(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {
+ntlm_parser_error ntlm_parse(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {
     if (!ctx_buffer || !msg) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
     ntlm_parser_error res;
@@ -676,23 +846,47 @@ ntlm_parser_error nlmp_parse(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {
 
     // Resetta msg
     memset(msg, 0, sizeof(ntlm_msg_t));
-
+    
     // Leggiamo signature
     if ((res = safe_ctx_buffer_read(ctx_buffer, NTLM_HEADER_SIGNATURE_SIZE)) < NTLM_PARSER_OK) return res;
     memcpy(msg->header.signature, ctx_buffer->buf + ctx_buffer->offset, NTLM_HEADER_SIGNATURE_SIZE);
+    // Incrementiamo offset
     if ((res = safe_incr_ctx_buff_offset(ctx_buffer, NTLM_HEADER_SIGNATURE_SIZE)) < NTLM_PARSER_OK) return res;
-    
     // Verifichiamo signature
     if ((res = check_signature(msg->header.signature)) < NTLM_PARSER_OK) return res;
-
+    
     // Leggiamo type
-
-
+    if ((res = safe_ctx_buffer_read(ctx_buffer, sizeof(ntlm_msg_type_t))) < NTLM_PARSER_OK) return res;
+    if ((res = read_u32_le(ctx_buffer, &msg->header.message_type)) < NTLM_PARSER_OK) return res;
+    if ((res = safe_incr_ctx_buff_offset(ctx_buffer, sizeof(ntlm_msg_type_t))) < NTLM_PARSER_OK) return res;
+    if ((res = check_msg_type(msg->header.message_type)) < NTLM_PARSER_OK) return res;
+    
     // In base al tipo
     // Leggiamo campi header
+    switch (msg->header.message_type) {
+        case NEGOTIATE_MESSAGE:
+            res = nlmp_parse_negotiate_message_header(ctx_buffer, msg);
+            if (res < NTLM_PARSER_OK) return res;
 
-    // Una volta fatto parse header facciamo parse payload
-    
+            res = nlmp_parse_negotiate_message_payload(ctx_buffer, msg);
+            if (res < NTLM_PARSER_OK) return res;
+            break;
+        
+        case CHALLENGE_MESSAGE:
+            res = nlmp_parse_challenge_message_header(ctx_buffer, msg);
+            if (res < NTLM_PARSER_OK) return res;
+            break;
+
+        case AUTHENTICATE_MESSAGE:
+            res = nlmp_parse_authenticate_message_header(ctx_buffer, msg);
+            if (res < NTLM_PARSER_OK) return res;
+            break;
+        
+        default:
+            return NTLM_PARSER_ERROR_INVALID_MSG_TYPE;
+    }
+
+    return NTLM_PARSER_OK;
 }
 
 
@@ -707,17 +901,180 @@ int main() {
 
     const uint8_t buffer3[] = {0x02, 0x01, 0x00, 0x00};
 
+    const uint8_t buffer4[] = {0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, 0x02, 0x00, 0x00, 0x00, 0x08, 0x00, 0x08, 0x00,
+                                0x38, 0x00, 0x00, 0x00, 0x15, 0x82, 0x89, 0xe2, 0xc4, 0xba, 0x87, 0xa2, 0x65, 0xde, 0x9e, 0x09,
+                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x9a, 0x00, 0x9a, 0x00, 0x40, 0x00, 0x00, 0x00,
+                                0x05, 0x02, 0xce, 0x0e, 0x00, 0x00, 0x00, 0x0f, 0x38, 0x00, 0x4e, 0x00, 0x49, 0x00, 0x49, 0x00,
+                                0x02, 0x00, 0x08, 0x00, 0x38, 0x00, 0x4e, 0x00, 0x49, 0x00, 0x49, 0x00, 0x01, 0x00, 0x1e, 0x00,
+                                0x57, 0x00, 0x49, 0x00, 0x4e, 0x00, 0x2d, 0x00, 0x31, 0x00, 0x46, 0x00, 0x58, 0x00, 0x34, 0x00,
+                                0x55, 0x00, 0x4d, 0x00, 0x50, 0x00, 0x53, 0x00, 0x34, 0x00, 0x54, 0x00, 0x42, 0x00, 0x04, 0x00,
+                                0x34, 0x00, 0x57, 0x00, 0x49, 0x00, 0x4e, 0x00, 0x2d, 0x00, 0x31, 0x00, 0x46, 0x00, 0x58, 0x00,
+                                0x34, 0x00, 0x55, 0x00, 0x4d, 0x00, 0x50, 0x00, 0x53, 0x00, 0x34, 0x00, 0x54, 0x00, 0x42, 0x00,
+                                0x2e, 0x00, 0x38, 0x00, 0x4e, 0x00, 0x49, 0x00, 0x49, 0x00, 0x2e, 0x00, 0x4c, 0x00, 0x4f, 0x00,
+                                0x43, 0x00, 0x41, 0x00, 0x4c, 0x00, 0x03, 0x00, 0x14, 0x00, 0x38, 0x00, 0x4e, 0x00, 0x49, 0x00,
+                                0x49, 0x00, 0x2e, 0x00, 0x4c, 0x00, 0x4f, 0x00, 0x43, 0x00, 0x41, 0x00, 0x4c, 0x00, 0x05, 0x00,
+                                0x14, 0x00, 0x38, 0x00, 0x4e, 0x00, 0x49, 0x00, 0x49, 0x00, 0x2e, 0x00, 0x4c, 0x00, 0x4f, 0x00,
+                                0x43, 0x00, 0x41, 0x00, 0x4c, 0x00, 0x00, 0x00, 0x00, 0x00};
+
 
     ntlm_msg_t msg;
     ntlm_parser_error res;
 
     ntlm_buffer_ctx_t ctx_buff;
-    res = init_ntlm_ctx_buffer(buffer1, 40, &ctx_buff);
+    res = init_ntlm_ctx_buffer(buffer4, 218, &ctx_buff);
 
-    res = nlmp_parse(&ctx_buff, &msg);
+    res = ntlm_parse(&ctx_buff, &msg);
     if (res < NTLM_PARSER_OK) {
         printf("Errore: 0x%x\n", res);
         return 1;
+    }
+
+    printf("Signature: %s (", msg.header.signature);
+    for (size_t i = 0; i < NTLM_HEADER_SIGNATURE_SIZE; i++) {
+        printf("0x%x ", msg.header.signature[i]);
+    }
+    printf(")\n");
+
+    printf("MsgType: %d (0x%x)\n", msg.header.message_type, msg.header.message_type);
+
+    if (msg.header.message_type == NEGOTIATE_MESSAGE){
+        printf("NegFlags: 0x%x\n", msg.header.msg_header.ntlm_negotiate_msg_header.negotiate_flags);
+
+        printf("DomainNameFields:\n");
+        printf("\t len: %d\n", msg.header.msg_header.ntlm_negotiate_msg_header.domain_name_fields.len);
+        printf("\t max_len: %d\n", msg.header.msg_header.ntlm_negotiate_msg_header.domain_name_fields.max_len);
+        printf("\t offset: %d\n", msg.header.msg_header.ntlm_negotiate_msg_header.domain_name_fields.buffer_offset);
+
+        printf("WorkstationFields:\n");
+        printf("\t len: %d\n", msg.header.msg_header.ntlm_negotiate_msg_header.workstation_fields.len);
+        printf("\t max_len: %d\n", msg.header.msg_header.ntlm_negotiate_msg_header.workstation_fields.max_len);
+        printf("\t offset: %d\n", msg.header.msg_header.ntlm_negotiate_msg_header.workstation_fields.buffer_offset);
+
+        if (msg.header.msg_header.ntlm_negotiate_msg_header.version_present) {
+            printf("Version: ");
+            for (size_t i = 0; i < msg.header.msg_header.ntlm_negotiate_msg_header.version.len; i++) {
+                printf("0x%x ", msg.header.msg_header.ntlm_negotiate_msg_header.version.data[i]);
+            }
+            printf("\n");
+        }
+        else {
+            printf("Version: None\n");
+        }
+
+        printf("DomainName Payload :");
+        for (size_t i = 0; i < msg.payload.ntlm_negotiate_msg_payload.domain_name.len; i++) {
+            printf("0x%x ", msg.payload.ntlm_negotiate_msg_payload.domain_name.data[i]);
+        }
+        printf("\n");
+
+        printf("WorkstationName Payload :");
+        for (size_t i = 0; i < msg.payload.ntlm_negotiate_msg_payload.workstation_name.len; i++) {
+            printf("0x%x ", msg.payload.ntlm_negotiate_msg_payload.workstation_name.data[i]);
+        }
+        printf("\n");
+    }
+    else if (msg.header.message_type == CHALLENGE_MESSAGE) {
+        printf("TargetNameFields:\n");
+        printf("\t len: %d\n", msg.header.msg_header.ntlm_challenge_msg_header.target_name_fields.len);
+        printf("\t max_len: %d\n", msg.header.msg_header.ntlm_challenge_msg_header.target_name_fields.max_len);
+        printf("\t offset: %d\n", msg.header.msg_header.ntlm_challenge_msg_header.target_name_fields.buffer_offset);
+
+        printf("NegFlags: 0x%x\n", msg.header.msg_header.ntlm_challenge_msg_header.negotiate_flags);
+
+        printf("ServerChallenge: 0x%xl\n", msg.header.msg_header.ntlm_challenge_msg_header.server_challenge);
+        printf("Reserved: %s\n", msg.header.msg_header.ntlm_challenge_msg_header.reserved);
+
+        printf("TargetInfoFields:\n");
+        printf("\t len: %d\n", msg.header.msg_header.ntlm_challenge_msg_header.target_info_fields.len);
+        printf("\t max_len: %d\n", msg.header.msg_header.ntlm_challenge_msg_header.target_info_fields.max_len);
+        printf("\t offset: %d\n", msg.header.msg_header.ntlm_challenge_msg_header.target_info_fields.buffer_offset);
+
+        if (msg.header.msg_header.ntlm_challenge_msg_header.version_present) {
+            printf("Version: ");
+            for (size_t i = 0; i < msg.header.msg_header.ntlm_challenge_msg_header.version.len; i++) {
+                printf("0x%x ", msg.header.msg_header.ntlm_challenge_msg_header.version.data[i]);
+            }
+            printf("\n");
+        }
+        else {
+            printf("Version: None\n");
+        }
+
+        printf("TargetName Payload :");
+        for (size_t i = 0; i < msg.payload.ntlm_challenge_msg_payload.target_name.len; i++) {
+            printf("0x%x ", msg.payload.ntlm_challenge_msg_payload.target_name.data[i]);
+        }
+        printf("\n");
+
+        printf("TargetInfo Payload :");
+        for (size_t i = 0; i < msg.payload.ntlm_challenge_msg_payload.target_info.len; i++) {
+            printf("0x%x ", msg.payload.ntlm_challenge_msg_payload.target_info.data[i]);
+        }
+        printf("\n");
+    } 
+    else {
+        printf("LmChallengeResponseFields:\n");
+        printf("\t len: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.lm_challenge_resp_fields.len);
+        printf("\t max_len: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.lm_challenge_resp_fields.max_len);
+        printf("\t offset: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.lm_challenge_resp_fields.buffer_offset);
+
+        printf("NtChallengeResponseFields:\n");
+        printf("\t len: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.nt_challenge_resp_fields.len);
+        printf("\t max_len: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.nt_challenge_resp_fields.max_len);
+        printf("\t offset: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.nt_challenge_resp_fields.buffer_offset);
+
+        printf("DomainNameFields:\n");
+        printf("\t len: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.domain_name_fields.len);
+        printf("\t max_len: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.domain_name_fields.max_len);
+        printf("\t offset: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.domain_name_fields.buffer_offset);
+
+        printf("UserNameFields:\n");
+        printf("\t len: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.username_fields.len);
+        printf("\t max_len: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.username_fields.max_len);
+        printf("\t offset: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.username_fields.buffer_offset);
+
+        printf("WorkstationFields:\n");
+        printf("\t len: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.workstation_fields.len);
+        printf("\t max_len: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.workstation_fields.max_len);
+        printf("\t offset: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.workstation_fields.buffer_offset);
+
+        printf("EncryptedRandomSessionKeyFields:\n");
+        printf("\t len: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.encrypted_random_session_key_fields.len);
+        printf("\t max_len: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.encrypted_random_session_key_fields.max_len);
+        printf("\t offset: %d\n", msg.header.msg_header.ntlm_authenticate_msg_header.encrypted_random_session_key_fields.buffer_offset);
+
+        printf("NegFlags: 0x%x\n", msg.header.msg_header.ntlm_authenticate_msg_header.negotiate_flags);
+
+        if (msg.header.msg_header.ntlm_authenticate_msg_header.version_present) {
+            printf("Version: ");
+            for (size_t i = 0; i < msg.header.msg_header.ntlm_authenticate_msg_header.version.len; i++) {
+                printf("0x%x ", msg.header.msg_header.ntlm_authenticate_msg_header.version.data[i]);
+            }
+            printf("\n");
+        }
+        else {
+            printf("Version: None\n");
+        }
+
+        if (msg.header.msg_header.ntlm_authenticate_msg_header.mic_present) {
+            printf("MIC: ");
+            for (size_t i = 0; i < NTLM_HEADER_MIC_SIZE; i++) {
+                printf("0x%x ", msg.header.msg_header.ntlm_authenticate_msg_header.mic[i]);
+            }
+            printf("\n");
+        }
+        else {
+            printf("MIC: None\n");
+        }
+
+        printf("LmChallengeResponse Payload:");
+        
+
+        printf("NtChallengeResponse Payload:");
+        printf("DomainName Payload:");
+        printf("UserName Payload:");
+        printf("Workstation Payload:");
+        printf("EncryptedRandomSessionKey Payload:");
     }
 
     printf("OK.\n");
