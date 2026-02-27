@@ -1044,6 +1044,8 @@ ntlm_parser_error parse_ntlm_msg(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg)
     // Parsiamo header e payload
     if ((res = parse_ntlm_msg_header(ctx_buffer, msg)) < NTLM_PARSER_OK) return res;
     if ((res = parse_ntlm_msg_payload(ctx_buffer, msg)) < NTLM_PARSER_OK) return res;
+
+    // Facciamo Decoding dei campi TODO:
     
     return NTLM_PARSER_OK;
 }
