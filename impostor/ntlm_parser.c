@@ -31,6 +31,11 @@
 #define NTLM_PARSER_ERROR_ALLOC_BLOB                    0x8000000b
 #define NTLM_PARSER_ERROR_OFFSET_OVERFLOW               0x8000000c
 #define NTLM_PARSER_ERROR_INVALID_NTLM_RESPONSE_SIZE    0x8000000d
+#define NTLM_PARSER_ERROR_INVALID_BLOB                  0x8000000e
+#define NTLM_PARSER_ERROR_PARSE_NTLM_V2_CLIENT_CHALLENGE_LEN 0x8000000f
+#define NTLM_PARSER_ERROR_INVALID_AV_ID                 0x80000010
+#define NTLM_PARSER_ERROR_INVALID_AV_LEN                0x80000011
+#define NTLM_PARSER_ERROR_ALLOC_AV_PAIR                 0x80000012
 
 typedef int32_t ntlm_parser_error;
 
@@ -47,9 +52,12 @@ typedef int32_t ntlm_parser_error;
 
 #define NTLM_V2_RESPONSE_SIZE                   16              // 16 Bytes
 #define NTLM_RESPONSE_SIZE                      24              // 24 Bytes
+#define NTLM_V2_RESP_MIN_LEN                    44              // Fixed Header size
 
 #define LM_V2_RESPONSE_SIZE                     16              // 16 Bytes
 #define LM_RESPONSE_SIZE                        24              // 24 Bytes
+
+#define AV_PAIR_HEADER_SIZE                     4
 
 /* Tipi messaggi NTLM */
 #define NEGOTIATE_MESSAGE    0x00000001
@@ -162,6 +170,12 @@ typedef uint16_t av_pair_id_t;
 //             Utils Structs 
 /******************************************/
 
+typedef struct av_pair_t {
+    av_pair_id_t av_id;
+    uint16_t av_len;
+    uint8_t *value;
+} av_pair_t;
+
 typedef struct ntlm_blob_t {
     uint32_t len;
     uint8_t *data;
@@ -235,10 +249,22 @@ typedef struct ntlm_header_t {
 //       Structs for Msg's Payloads
 /******************************************/
 
+typedef struct ntlm_v2_client_challenge_t {
+    uint8_t resp_type;
+    uint8_t hi_resp_type;
+    uint16_t reserved_1;
+    uint32_t reserved_2;
+    uint64_t time_stamp;
+    uint64_t challenge_from_client;
+    uint32_t reserved_3;
+
+    size_t av_pairs_size;
+    av_pair_t **av_pairs;
+} ntlm_v2_client_challenge_t;
+
 typedef struct ntlm_v2_response_t {
     uint8_t response[NTLM_V2_RESPONSE_SIZE];
-    size_t size;
-    uint8_t *ntlm_v2_client_challenge;
+    ntlm_v2_client_challenge_t ntlm_v2_client_challenge;
 } ntlm_v2_response_t;
 
 typedef struct ntlm_response_t {
@@ -465,6 +491,70 @@ ntlm_parser_error ntlm_ctx_buffer_check_safe_read(ntlm_buffer_ctx_t *ctx_buffer,
 /******************** Helper functions for Read from Buffer ***************************/
 // Incrementano offset di ctx_buffer
 
+// Funzioni di read assumono input valido
+void read_u16(const uint8_t *buff, uint16_t *out) {
+    *out = ((uint16_t)buff[1] << 8)
+           |((uint16_t)buff[0]);
+}
+
+void read_u16_le(const uint8_t *buff, uint16_t *out) {
+    *out = (uint16_t)(buff[0])
+           | (((uint16_t)buff[1]) << 8);   
+}
+
+void read_u32(const uint8_t *buff, uint32_t *out) {
+    *out = ((uint32_t)buff[3] << 24)
+           | ((uint32_t)buff[2] << 16)
+           | ((uint32_t)buff[1] << 8)
+           | (uint32_t)buff[0];
+}
+
+void read_u32_le(const uint8_t *buff, uint32_t *out) {
+    *out = (uint32_t)(buff[0])
+           | ((uint32_t)buff[1] << 8)
+           | ((uint32_t)buff[2] << 16)
+           | ((uint32_t)buff[3] << 24);
+}
+
+void read_u64(const uint8_t *buff, uint64_t *out) {
+    *out = ((uint64_t)buff[7] << 56)
+           | ((uint64_t)buff[6] << 48)
+           | ((uint64_t)buff[5] << 40)
+           | ((uint64_t)buff[4] << 32)
+           | ((uint64_t)buff[3] << 24)
+           | ((uint64_t)buff[2] << 16)
+           | ((uint64_t)buff[1] << 8)
+           | ((uint64_t)buff[0]);
+}
+
+void read_u64_le(const uint8_t *buff, uint64_t *out) {
+    *out = (uint64_t)buff[0]
+           | ((uint64_t)buff[1] << 8)
+           | ((uint64_t)buff[2] << 16)
+           | ((uint64_t)buff[3] << 24)
+           | ((uint64_t)buff[4] << 32)
+           | ((uint64_t)buff[5] << 40)
+           | ((uint64_t)buff[6] << 48)
+           | ((uint64_t)buff[7] << 56);
+}
+
+// Normal read. non little-endian
+ntlm_parser_error ntlm_ctx_buffer_read_u16(ntlm_buffer_ctx_t *ctx_buffer, uint16_t *out) {
+    if (!ctx_buffer || !out) return NTLM_PARSER_ERROR_INVALID_ARGS;
+
+    ntlm_parser_error res;
+    if ((res = ntlm_ctx_buffer_is_valid(ctx_buffer)) < NTLM_PARSER_OK) return res;
+    // devo leggere dal buffer 2 byte, controlliamo che la lunghezza residue sia almeno di due byte
+    if ((res = ntlm_ctx_buffer_check_safe_read(ctx_buffer, sizeof(uint16_t))) < NTLM_PARSER_OK) return res;
+    
+    size_t offset = ctx_buffer->offset;
+    read_u16(ctx_buffer->buf + offset, out);
+
+    if ((res = ntlm_ctx_buff_safe_incr_offset(ctx_buffer, sizeof(uint16_t))) < NTLM_PARSER_OK) return res;
+    
+    return NTLM_PARSER_OK;
+}
+
 ntlm_parser_error ntlm_ctx_buffer_read_u16_le(ntlm_buffer_ctx_t *ctx_buffer, uint16_t *out) {
     if (!ctx_buffer || !out) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
@@ -474,11 +564,27 @@ ntlm_parser_error ntlm_ctx_buffer_read_u16_le(ntlm_buffer_ctx_t *ctx_buffer, uin
     if ((res = ntlm_ctx_buffer_check_safe_read(ctx_buffer, sizeof(uint16_t))) < NTLM_PARSER_OK) return res;
     
     size_t offset = ctx_buffer->offset;
-    *out = (uint16_t)(ctx_buffer->buf[offset])
-           | (((uint16_t)ctx_buffer->buf[offset + 1]) << 8);
+    read_u16_le(ctx_buffer->buf + offset, out);
 
     if ((res = ntlm_ctx_buff_safe_incr_offset(ctx_buffer, sizeof(uint16_t))) < NTLM_PARSER_OK) return res;
     
+    return NTLM_PARSER_OK;
+}
+
+// Normal read. non little-endian
+ntlm_parser_error ntlm_ctx_buffer_read_u32(ntlm_buffer_ctx_t *ctx_buffer, uint32_t *out) {
+    if (!ctx_buffer || !out) return NTLM_PARSER_ERROR_INVALID_ARGS;
+
+    ntlm_parser_error res;
+    if ((res = ntlm_ctx_buffer_is_valid(ctx_buffer)) < NTLM_PARSER_OK) return res;
+    // devo leggere dal buffer 4 byte, controlliamo che la lunghezza residue sia almeno di due byte
+    if ((res = ntlm_ctx_buffer_check_safe_read(ctx_buffer, sizeof(uint32_t))) < NTLM_PARSER_OK) return res;
+
+    size_t offset = ctx_buffer->offset;
+    read_u32(ctx_buffer->buf + offset, out);
+
+    if ((res = ntlm_ctx_buff_safe_incr_offset(ctx_buffer, sizeof(uint32_t))) < NTLM_PARSER_OK) return res;
+
     return NTLM_PARSER_OK;
 }
 
@@ -491,12 +597,26 @@ ntlm_parser_error ntlm_ctx_buffer_read_u32_le(ntlm_buffer_ctx_t *ctx_buffer, uin
     if ((res = ntlm_ctx_buffer_check_safe_read(ctx_buffer, sizeof(uint32_t))) < NTLM_PARSER_OK) return res;
 
     size_t offset = ctx_buffer->offset;
-    *out = (uint32_t)(ctx_buffer->buf[offset])
-           | ((uint32_t)ctx_buffer->buf[offset + 1] << 8)
-           | ((uint32_t)ctx_buffer->buf[offset + 2] << 16)
-           | ((uint32_t)ctx_buffer->buf[offset + 3] << 24);
+    read_u32_le(ctx_buffer->buf + offset, out);
 
     if ((res = ntlm_ctx_buff_safe_incr_offset(ctx_buffer, sizeof(uint32_t))) < NTLM_PARSER_OK) return res;
+
+    return NTLM_PARSER_OK;
+}
+
+// Normal read. non little-endian
+ntlm_parser_error ntlm_ctx_buffer_read_u64(ntlm_buffer_ctx_t *ctx_buffer, uint64_t *out) {
+    if (!ctx_buffer || !out) return NTLM_PARSER_ERROR_INVALID_ARGS;
+
+    ntlm_parser_error res;
+    if ((res = ntlm_ctx_buffer_is_valid(ctx_buffer)) < NTLM_PARSER_OK) return res;
+    // devo leggere dal buffer 8 byte, controlliamo che la lunghezza residue sia almeno di due byte
+    if ((res = ntlm_ctx_buffer_check_safe_read(ctx_buffer, sizeof(uint64_t))) < NTLM_PARSER_OK) return res;
+
+    size_t offset = ctx_buffer->offset;
+    read_u64(ctx_buffer->buf + offset, out);
+
+    if ((res = ntlm_ctx_buff_safe_incr_offset(ctx_buffer, sizeof(uint64_t))) < NTLM_PARSER_OK) return res;
 
     return NTLM_PARSER_OK;
 }
@@ -510,14 +630,7 @@ ntlm_parser_error ntlm_ctx_buffer_read_u64_le(ntlm_buffer_ctx_t *ctx_buffer, uin
     if ((res = ntlm_ctx_buffer_check_safe_read(ctx_buffer, sizeof(uint64_t))) < NTLM_PARSER_OK) return res;
 
     size_t offset = ctx_buffer->offset;
-    *out = (uint64_t)ctx_buffer->buf[offset]
-           | ((uint64_t)ctx_buffer->buf[offset + 1] << 8)
-           | ((uint64_t)ctx_buffer->buf[offset + 2] << 16)
-           | ((uint64_t)ctx_buffer->buf[offset + 3] << 24)
-           | ((uint64_t)ctx_buffer->buf[offset + 4] << 32)
-           | ((uint64_t)ctx_buffer->buf[offset + 5] << 40)
-           | ((uint64_t)ctx_buffer->buf[offset + 6] << 48)
-           | ((uint64_t)ctx_buffer->buf[offset + 7] << 56);
+    read_u64_le(ctx_buffer->buf + offset, out);
 
     if ((res = ntlm_ctx_buff_safe_incr_offset(ctx_buffer, sizeof(uint64_t))) < NTLM_PARSER_OK) return res;
 
@@ -603,7 +716,7 @@ ntlm_parser_error header_fields_parse(ntlm_buffer_ctx_t *ctx_buffer, header_fiel
     return NTLM_PARSER_OK;
 }
 
-ntlm_parser_error generic_4_bytes_header_parse(ntlm_buffer_ctx_t *ctx_buffer, uint32_t *dest) {
+ntlm_parser_error generic_4_bytes_header_parse_le(ntlm_buffer_ctx_t *ctx_buffer, uint32_t *dest) {
     if (!ctx_buffer || !dest) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
     ntlm_parser_error res;
@@ -612,11 +725,20 @@ ntlm_parser_error generic_4_bytes_header_parse(ntlm_buffer_ctx_t *ctx_buffer, ui
     return NTLM_PARSER_OK;
 }
 
-ntlm_parser_error generic_8_bytes_header_parse(ntlm_buffer_ctx_t *ctx_buffer, uint64_t *dest) {
+ntlm_parser_error generic_8_bytes_header_parse_le(ntlm_buffer_ctx_t *ctx_buffer, uint64_t *dest) {
     if (!ctx_buffer || !dest) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
     ntlm_parser_error res;
     if ((res = ntlm_ctx_buffer_read_u64_le(ctx_buffer, dest)) < NTLM_PARSER_OK) return res;
+    
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error generic_8_bytes_header_parse(ntlm_buffer_ctx_t *ctx_buffer, uint64_t *dest) {
+    if (!ctx_buffer || !dest) return NTLM_PARSER_ERROR_INVALID_ARGS;
+
+    ntlm_parser_error res;
+    if ((res = ntlm_ctx_buffer_read_u64(ctx_buffer, dest)) < NTLM_PARSER_OK) return res;
     
     return NTLM_PARSER_OK;
 }
@@ -635,11 +757,11 @@ ntlm_parser_error generic_n_bytes_header_parse(ntlm_buffer_ctx_t *ctx_buffer, ui
 }
 
 ntlm_parser_error ntlm_negotiate_flags_parse(ntlm_buffer_ctx_t *ctx_buffer, ntlm_negotiate_flags_t *flags) {
-    return generic_4_bytes_header_parse(ctx_buffer, flags);
+    return generic_4_bytes_header_parse_le(ctx_buffer, flags);
 }
 
 ntlm_parser_error msg_type_header_parse(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_type_t *type) {
-    return generic_4_bytes_header_parse(ctx_buffer, type);
+    return generic_4_bytes_header_parse_le(ctx_buffer, type);
 }
 
 ntlm_parser_error version_header_parse(ntlm_buffer_ctx_t *ctx_buffer, uint64_t *version) {
@@ -698,8 +820,18 @@ ntlm_parser_error header_fields_payload_parse(ntlm_buffer_ctx_t *ctx_buffer, hea
 }
 
 /********* Parsing per campi payload specifici *********/
-// TODO:
-ntlm_parser_error ntlm_v2_response_payload_parse(ntlm_blob_t *blob, ntlm_v2_response_t *resp) {}
+
+ntlm_parser_error parse_av_pair(ntlm_buffer_ctx_t *ctx_buffer, av_pair_t **av_pair) {
+    
+}
+
+ntlm_parser_error parse_av_pairs(ntlm_buffer_ctx_t *ctx_buffer, av_pair_t **av_pairs, size_t out_size) {
+    
+}
+
+ntlm_parser_error ntlm_v2_response_payload_parse(ntlm_buffer_ctx_t *ctx_buffer, ntlm_v2_response_t *resp) {
+    
+}
 
 ntlm_parser_error ntlm_response_payload_parse(ntlm_blob_t *blob, ntlm_response_t *resp) {}
 
