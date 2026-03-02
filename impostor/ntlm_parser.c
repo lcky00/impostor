@@ -170,17 +170,10 @@ typedef uint16_t av_pair_id_t;
 //             Utils Structs 
 /******************************************/
 
-typedef struct av_pair_t {
-    av_pair_id_t av_id;
-    uint16_t av_len;
-    uint8_t *value;
-} av_pair_t;
-
 typedef struct ntlm_blob_t {
     uint32_t len;
     uint8_t *data;
 } ntlm_blob_t;
-
 
 typedef struct header_fields_t {
     uint16_t len;
@@ -248,40 +241,6 @@ typedef struct ntlm_header_t {
 /******************************************/
 //       Structs for Msg's Payloads
 /******************************************/
-
-typedef struct ntlm_v2_client_challenge_t {
-    uint8_t resp_type;
-    uint8_t hi_resp_type;
-    uint16_t reserved_1;
-    uint32_t reserved_2;
-    uint64_t time_stamp;
-    uint64_t challenge_from_client;
-    uint32_t reserved_3;
-
-    size_t av_pairs_size;
-    av_pair_t **av_pairs;
-} ntlm_v2_client_challenge_t;
-
-typedef struct ntlm_v2_response_t {
-    uint8_t response[NTLM_V2_RESPONSE_SIZE];
-    ntlm_v2_client_challenge_t ntlm_v2_client_challenge;
-} ntlm_v2_response_t;
-
-typedef struct ntlm_response_t {
-    uint8_t response[NTLM_RESPONSE_SIZE];
-} ntlm_response_t;
-
-// In totale 24 Bytes
-typedef struct lm_v2_response_t {
-    uint8_t response[LM_V2_RESPONSE_SIZE];
-    uint64_t challenge_from_client;
-} lm_v2_response_t;
-
-// In totale 24 Bytes
-typedef struct lm_response_t {
-    uint8_t response[LM_RESPONSE_SIZE];
-} lm_response_t;
-
 
 typedef struct ntlm_negotiate_msg_payload_t {
     ntlm_blob_t domain_name;
@@ -492,6 +451,10 @@ ntlm_parser_error ntlm_ctx_buffer_check_safe_read(ntlm_buffer_ctx_t *ctx_buffer,
 // Incrementano offset di ctx_buffer
 
 // Funzioni di read assumono input valido
+void read_u8(const uint8_t *buff, uint16_t *out) {
+    *out = ((uint16_t)buff[0]);
+}
+
 void read_u16(const uint8_t *buff, uint16_t *out) {
     *out = ((uint16_t)buff[1] << 8)
            |((uint16_t)buff[0]);
@@ -539,6 +502,22 @@ void read_u64_le(const uint8_t *buff, uint64_t *out) {
 }
 
 // Normal read. non little-endian
+ntlm_parser_error ntlm_ctx_buffer_read_u8(ntlm_buffer_ctx_t *ctx_buffer, uint8_t *out) {
+    if (!ctx_buffer || !out) return NTLM_PARSER_ERROR_INVALID_ARGS;
+
+    ntlm_parser_error res;
+    if ((res = ntlm_ctx_buffer_is_valid(ctx_buffer)) < NTLM_PARSER_OK) return res;
+    // devo leggere dal buffer 1 byte, controlliamo che la lunghezza residue sia almeno di due byte
+    if ((res = ntlm_ctx_buffer_check_safe_read(ctx_buffer, sizeof(uint8_t))) < NTLM_PARSER_OK) return res;
+    
+    size_t offset = ctx_buffer->offset;
+    read_u8(ctx_buffer->buf + offset, out);
+
+    if ((res = ntlm_ctx_buff_safe_incr_offset(ctx_buffer, sizeof(uint8_t))) < NTLM_PARSER_OK) return res;
+    
+    return NTLM_PARSER_OK;
+}
+
 ntlm_parser_error ntlm_ctx_buffer_read_u16(ntlm_buffer_ctx_t *ctx_buffer, uint16_t *out) {
     if (!ctx_buffer || !out) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
@@ -743,7 +722,7 @@ ntlm_parser_error generic_8_bytes_header_parse(ntlm_buffer_ctx_t *ctx_buffer, ui
     return NTLM_PARSER_OK;
 }
 
-ntlm_parser_error generic_n_bytes_header_parse(ntlm_buffer_ctx_t *ctx_buffer, uint8_t *dest, size_t len) {
+ntlm_parser_error generic_n_bytes_read(ntlm_buffer_ctx_t *ctx_buffer, uint8_t *dest, size_t len) {
     if (!ctx_buffer || !dest) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
     ntlm_parser_error res;
@@ -777,11 +756,11 @@ ntlm_parser_error reserved_header_parse(ntlm_buffer_ctx_t *ctx_buffer, uint64_t 
 }
 
 ntlm_parser_error mic_header_parse(ntlm_buffer_ctx_t *ctx_buffer, uint8_t *mic) {
-    return generic_n_bytes_header_parse(ctx_buffer, mic, NTLM_HEADER_MIC_SIZE);
+    return generic_n_bytes_read(ctx_buffer, mic, NTLM_HEADER_MIC_SIZE);
 }
 
 ntlm_parser_error signature_header_parse(ntlm_buffer_ctx_t *ctx_buffer, uint8_t *signature) {
-    return generic_n_bytes_header_parse(ctx_buffer, signature, NTLM_HEADER_SIGNATURE_SIZE);
+    return generic_n_bytes_read(ctx_buffer, signature, NTLM_HEADER_SIGNATURE_SIZE);
 }
 
 /************************ For Payload ************************/
@@ -818,27 +797,6 @@ ntlm_parser_error header_fields_payload_parse(ntlm_buffer_ctx_t *ctx_buffer, hea
 
     return NTLM_PARSER_OK;
 }
-
-/********* Parsing per campi payload specifici *********/
-
-ntlm_parser_error parse_av_pair(ntlm_buffer_ctx_t *ctx_buffer, av_pair_t **av_pair) {
-    
-}
-
-ntlm_parser_error parse_av_pairs(ntlm_buffer_ctx_t *ctx_buffer, av_pair_t **av_pairs, size_t out_size) {
-    
-}
-
-ntlm_parser_error ntlm_v2_response_payload_parse(ntlm_buffer_ctx_t *ctx_buffer, ntlm_v2_response_t *resp) {
-    
-}
-
-ntlm_parser_error ntlm_response_payload_parse(ntlm_blob_t *blob, ntlm_response_t *resp) {}
-
-ntlm_parser_error lm_v2_response_payload_parse(ntlm_blob_t *blob, lm_v2_response_t *resp) {}
-
-ntlm_parser_error lm_response_response_payload_parse(ntlm_blob_t *blob, lm_response_t *resp) {}
-
 
 /******************************************/
 //           Main Parse Functions
@@ -1025,6 +983,199 @@ ntlm_parser_error parse_ntlm_msg_header(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_
     return NTLM_PARSER_OK;
 }
 
+/******************************************/
+//          Decode Functions
+/******************************************/
+
+typedef struct av_pair_t {
+    av_pair_id_t av_id;
+    uint16_t av_len;
+    uint8_t *value;
+} av_pair_t;
+
+typedef struct ntlm_v2_client_challenge_t {
+    uint8_t resp_type;
+    uint8_t hi_resp_type;
+    uint16_t reserved_1;
+    uint32_t reserved_2;
+    uint64_t time_stamp;
+    uint64_t challenge_from_client;
+    uint32_t reserved_3;
+
+    size_t av_pairs_size;
+    av_pair_t **av_pairs;
+} ntlm_v2_client_challenge_t;
+
+typedef struct ntlm_v2_response_t {
+    uint8_t response[NTLM_V2_RESPONSE_SIZE];
+    ntlm_v2_client_challenge_t ntlm_v2_client_challenge;
+} ntlm_v2_response_t;
+
+typedef struct ntlm_response_t {
+    uint8_t response[NTLM_RESPONSE_SIZE];
+} ntlm_response_t;
+
+// In totale 24 Bytes
+typedef struct lm_v2_response_t {
+    uint8_t response[LM_V2_RESPONSE_SIZE];
+    uint64_t challenge_from_client;
+} lm_v2_response_t;
+
+// In totale 24 Bytes
+typedef struct lm_response_t {
+    uint8_t response[LM_RESPONSE_SIZE];
+} lm_response_t;
+
+
+/********* Parsing per campi payload specifici *********/
+
+void ntlm_av_pairs_free(av_pair_t ***av_pairs, size_t len) {
+    if (!av_pairs || !*av_pairs) return;
+    for (size_t i = 0; i < len; i++) {
+        if ((*av_pairs)[i]->value) {
+            free((*av_pairs)[i]->value);
+            (*av_pairs)[i]->value = NULL;
+        }
+        free((*av_pairs)[i]);
+        (*av_pairs)[i] = NULL;
+    }
+
+    free(*av_pairs);
+    *av_pairs = NULL;
+}
+
+uint8_t check_av_id(av_pair_id_t type) {
+    return type == MSV_AV_EOL || type == MSV_AV_NB_COMPUTER_NAME 
+            || type == MSV_AV_NB_DOMAIN_NAME || type == MSV_AV_DNS_COMPUTER_NAME 
+            || type == MSV_AV_DNS_DOMAIN_NAME || type == MSV_AV_DNS_TREE_NAME 
+            || type == MSV_AV_FLAGS || type == MSV_AV_TIMESTAMP 
+            || type == MSV_AV_SINGLE_HOST || type == MSV_AV_TARGET_NAME 
+            || type == MSV_AV_CHANNEL_BINDINGS;
+}
+
+ntlm_parser_error parse_av_pair(ntlm_buffer_ctx_t *ctx_buffer, av_pair_t **av_pair) {
+    if (!ctx_buffer || !av_pair) return NTLM_PARSER_ERROR_INVALID_ARGS;
+
+    ntlm_parser_error res;
+
+    *av_pair = malloc(sizeof(av_pair_t));
+    if (!*av_pair) return NTLM_PARSER_ERROR_ALLOC_AV_PAIR;
+
+    (*av_pair)->value = NULL;
+
+    // Leggiamo AvId, AvLen e Value 
+    if ((res = ntlm_ctx_buffer_read_u16_le(ctx_buffer, &(*av_pair)->av_id)) < NTLM_PARSER_OK) {
+        free(*av_pair);
+        *av_pair = NULL;
+        return res;
+    }
+
+    if (!check_av_id((*av_pair)->av_id)) {
+        free(*av_pair);
+        *av_pair = NULL;
+        return NTLM_PARSER_ERROR_INVALID_AV_ID;
+    }
+
+    if ((res = ntlm_ctx_buffer_read_u16_le(ctx_buffer, &(*av_pair)->av_len)) < NTLM_PARSER_OK) {
+        free(*av_pair);
+        *av_pair = NULL;
+        return res;
+    }
+
+    if ((*av_pair)->av_len == 0) {
+        (*av_pair)->value = NULL;
+        return NTLM_PARSER_OK;
+    }
+
+    (*av_pair)->value = malloc(sizeof(uint8_t) * (*av_pair)->av_len);
+    if (!(*av_pair)->value) {
+        free(*av_pair);
+        *av_pair = NULL;
+        return NTLM_PARSER_ERROR_ALLOC_AV_PAIR;
+    }
+
+    uint8_t *v = (*av_pair)->value;
+    if ((res = generic_n_bytes_read(ctx_buffer, v, (*av_pair)->av_len)) < NTLM_PARSER_OK) {
+        free(v);
+        free(*av_pair);
+        *av_pair = NULL;
+        return res;
+    }
+
+    return NTLM_PARSER_OK;
+
+}
+
+ntlm_parser_error parse_av_pairs(ntlm_buffer_ctx_t *ctx_buffer, av_pair_t ***av_pairs, size_t *out_size) {
+    if (!ctx_buffer || !av_pairs || !out_size) return NTLM_PARSER_ERROR_INVALID_ARGS;
+
+    ntlm_parser_error res;
+    av_pair_t *av_pair_aux;
+
+    *out_size = 0;
+    *av_pairs = NULL;
+
+    while(1) {
+        if ((res = parse_av_pair(ctx_buffer, &av_pair_aux)) < NTLM_PARSER_OK) {
+            ntlm_av_pairs_free(av_pairs, *out_size);
+            return res;
+        }
+
+        if (av_pair_aux->av_id == MSV_AV_EOL) {
+            free(av_pair_aux); 
+            break;
+        }
+        
+        av_pair_t **tmp = realloc(*av_pairs, sizeof(av_pair_t*) * (*out_size + 1));
+        if (!tmp) {
+            free(av_pair_aux);
+            ntlm_av_pairs_free(av_pairs, *out_size);
+            return NTLM_PARSER_ERROR_ALLOC_AV_PAIR;
+        }
+
+        *av_pairs = tmp;
+        (*av_pairs)[*out_size] = av_pair_aux;
+        (*out_size)++;
+    }
+
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error ntlm_v2_response_payload_parse(ntlm_blob_t *blob, ntlm_v2_response_t *resp) {
+    if (!blob || !resp) return NTLM_PARSER_ERROR_INVALID_ARGS;
+    if (!blob->data) return NTLM_PARSER_ERROR_INVALID_BLOB;
+
+    memset(resp, 0, sizeof(*resp));
+
+    ntlm_parser_error res;
+    ntlm_buffer_ctx_t ntlm_v2_buff_ctx;
+
+    ntlm_v2_client_challenge_t *c = &resp->ntlm_v2_client_challenge;
+    
+    if ((res = ntlm_ctx_buffer_init(blob->data, blob->len, &ntlm_v2_buff_ctx)) < NTLM_PARSER_OK) return res;
+
+    // Leggiamo Response, RespType, HiRespType, Reserved1, Reserved2,
+    // TimeStamp, ChallengeFromClient, Reserved3
+    if ((res = generic_n_bytes_read(&ntlm_v2_buff_ctx, resp->response, NTLM_V2_RESPONSE_SIZE)) < NTLM_PARSER_OK) return res;
+    if ((res = ntlm_ctx_buffer_read_u8(&ntlm_v2_buff_ctx, &c->resp_type)) < NTLM_PARSER_OK) return res;
+    if ((res = ntlm_ctx_buffer_read_u8(&ntlm_v2_buff_ctx, &c->hi_resp_type)) < NTLM_PARSER_OK) return res;
+    if ((res = ntlm_ctx_buffer_read_u16(&ntlm_v2_buff_ctx, &c->reserved_1)) < NTLM_PARSER_OK) return res;
+    if ((res = ntlm_ctx_buffer_read_u32(&ntlm_v2_buff_ctx, &c->reserved_2)) < NTLM_PARSER_OK) return res;
+    if ((res = ntlm_ctx_buffer_read_u64(&ntlm_v2_buff_ctx, &c->time_stamp)) < NTLM_PARSER_OK) return res;
+    if ((res = ntlm_ctx_buffer_read_u64(&ntlm_v2_buff_ctx, &c->challenge_from_client)) < NTLM_PARSER_OK) return res;
+    if ((res = ntlm_ctx_buffer_read_u32(&ntlm_v2_buff_ctx, &c->reserved_3)) < NTLM_PARSER_OK) return res;
+
+    // Leggiamo AvPairs 
+    if ((res = parse_av_pairs(&ntlm_v2_buff_ctx, &c->av_pairs, &c->av_pairs_size)) < NTLM_PARSER_OK) return res;
+
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error ntlm_response_payload_parse(ntlm_blob_t *blob, ntlm_response_t *resp) {}
+
+ntlm_parser_error lm_v2_response_payload_parse(ntlm_blob_t *blob, lm_v2_response_t *resp) {}
+ntlm_parser_error lm_response_response_payload_parse(ntlm_blob_t *blob, lm_response_t *resp) {}
+
 /********************* Main Parser **************************/
 
 ntlm_parser_error parse_ntlm_msg(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg) {
@@ -1039,7 +1190,10 @@ ntlm_parser_error parse_ntlm_msg(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg)
     
     // Leggiamo Signature e type
     if ((res = signature_header_parse(ctx_buffer, msg->header.signature)) < NTLM_PARSER_OK) return res;
+    if ((res = check_signature(msg->header.signature)) < NTLM_PARSER_OK) return res;
+
     if ((res = msg_type_header_parse(ctx_buffer, &msg->header.message_type)) < NTLM_PARSER_OK) return res;
+    if ((res = check_msg_type(msg->header.message_type)) < NTLM_PARSER_OK) return res;
 
     // Parsiamo header e payload
     if ((res = parse_ntlm_msg_header(ctx_buffer, msg)) < NTLM_PARSER_OK) return res;
