@@ -16,6 +16,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <iconv.h>
+#include <stdarg.h>
+
 /* Errori parsing */
 #define NTLM_PARSER_OK                                  0x00000000
 #define NTLM_PARSER_ERROR_INVALID_ARGS                  0x80000001
@@ -36,6 +39,8 @@
 #define NTLM_PARSER_ERROR_INVALID_AV_ID                 0x80000010
 #define NTLM_PARSER_ERROR_INVALID_AV_LEN                0x80000011
 #define NTLM_PARSER_ERROR_ALLOC_AV_PAIR                 0x80000012
+#define NTLM_PARSER_ERROR_MAX_AV_PAIR_REACHED           0x80000013
+#define NTLM_PARSER_ERROR_LEN_AV_PAIR                   0x80000014
 
 typedef int32_t ntlm_parser_error;
 
@@ -58,6 +63,8 @@ typedef int32_t ntlm_parser_error;
 #define LM_RESPONSE_SIZE                        24              // 24 Bytes
 
 #define AV_PAIR_HEADER_SIZE                     4
+
+#define NTLM_MAX_AV_PAIRS 128
 
 /* Tipi messaggi NTLM */
 #define NEGOTIATE_MESSAGE    0x00000001
@@ -407,7 +414,7 @@ ntlm_parser_error free_ntlm_msg(ntlm_msg_t *msg) {
 /******************************************/
 
 ntlm_parser_error ntlm_ctx_buffer_init(const uint8_t *buffer, size_t len, ntlm_buffer_ctx_t *out) {
-    if (!buffer || !*buffer || !out) return NTLM_PARSER_ERROR_INVALID_ARGS;
+    if (!buffer || !out) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
     out->buf = buffer;
     out->size = len;
@@ -451,7 +458,7 @@ ntlm_parser_error ntlm_ctx_buffer_check_safe_read(ntlm_buffer_ctx_t *ctx_buffer,
 // Incrementano offset di ctx_buffer
 
 // Funzioni di read assumono input valido
-void read_u8(const uint8_t *buff, uint16_t *out) {
+void read_u8(const uint8_t *buff, uint8_t *out) {
     *out = ((uint16_t)buff[0]);
 }
 
@@ -1003,6 +1010,7 @@ typedef struct ntlm_v2_client_challenge_t {
     uint32_t reserved_3;
 
     size_t av_pairs_size;
+    size_t av_pairs_dim;
     av_pair_t **av_pairs;
 } ntlm_v2_client_challenge_t;
 
@@ -1032,12 +1040,14 @@ typedef struct lm_response_t {
 void ntlm_av_pairs_free(av_pair_t ***av_pairs, size_t len) {
     if (!av_pairs || !*av_pairs) return;
     for (size_t i = 0; i < len; i++) {
-        if ((*av_pairs)[i]->value) {
-            free((*av_pairs)[i]->value);
-            (*av_pairs)[i]->value = NULL;
+        if ((*av_pairs)[i]) {
+            if ((*av_pairs)[i]->value) {
+                free((*av_pairs)[i]->value);
+                (*av_pairs)[i]->value = NULL;
+            }
+            free((*av_pairs)[i]);
+            (*av_pairs)[i] = NULL;
         }
-        free((*av_pairs)[i]);
-        (*av_pairs)[i] = NULL;
     }
 
     free(*av_pairs);
@@ -1082,6 +1092,12 @@ ntlm_parser_error parse_av_pair(ntlm_buffer_ctx_t *ctx_buffer, av_pair_t **av_pa
         return res;
     }
 
+    if ((*av_pair)->av_len > ctx_buffer->size) {
+        free(*av_pair);
+        *av_pair = NULL;
+        return NTLM_PARSER_ERROR_LEN_AV_PAIR;
+    }
+
     if ((*av_pair)->av_len == 0) {
         (*av_pair)->value = NULL;
         return NTLM_PARSER_OK;
@@ -1106,16 +1122,23 @@ ntlm_parser_error parse_av_pair(ntlm_buffer_ctx_t *ctx_buffer, av_pair_t **av_pa
 
 }
 
-ntlm_parser_error parse_av_pairs(ntlm_buffer_ctx_t *ctx_buffer, av_pair_t ***av_pairs, size_t *out_size) {
-    if (!ctx_buffer || !av_pairs || !out_size) return NTLM_PARSER_ERROR_INVALID_ARGS;
+ntlm_parser_error parse_av_pairs(ntlm_buffer_ctx_t *ctx_buffer, av_pair_t ***av_pairs, size_t *out_size, size_t *out_dim) {
+    if (!ctx_buffer || !av_pairs || !out_size || !out_dim) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
     ntlm_parser_error res;
     av_pair_t *av_pair_aux;
 
     *out_size = 0;
-    *av_pairs = NULL;
+    *out_dim = 1;
+    *av_pairs = malloc(sizeof(av_pair_t*) * (*out_dim));
+    if (!*av_pairs) return NTLM_PARSER_ERROR_ALLOC_AV_PAIR;
 
     while(1) {
+        if (*out_size >= NTLM_MAX_AV_PAIRS) {
+            ntlm_av_pairs_free(av_pairs, *out_size);
+            return NTLM_PARSER_ERROR_MAX_AV_PAIR_REACHED;
+        }
+
         if ((res = parse_av_pair(ctx_buffer, &av_pair_aux)) < NTLM_PARSER_OK) {
             ntlm_av_pairs_free(av_pairs, *out_size);
             return res;
@@ -1126,14 +1149,17 @@ ntlm_parser_error parse_av_pairs(ntlm_buffer_ctx_t *ctx_buffer, av_pair_t ***av_
             break;
         }
         
-        av_pair_t **tmp = realloc(*av_pairs, sizeof(av_pair_t*) * (*out_size + 1));
-        if (!tmp) {
-            free(av_pair_aux);
-            ntlm_av_pairs_free(av_pairs, *out_size);
-            return NTLM_PARSER_ERROR_ALLOC_AV_PAIR;
-        }
+        if (*out_size >= *out_dim) {
+            av_pair_t **tmp = realloc(*av_pairs, sizeof(av_pair_t*) * (*out_dim * 2));
+            if (!tmp) {
+                free(av_pair_aux);
+                ntlm_av_pairs_free(av_pairs, *out_size);
+                return NTLM_PARSER_ERROR_ALLOC_AV_PAIR;
+            }
 
-        *av_pairs = tmp;
+            *out_dim = *out_dim * 2;
+            *av_pairs = tmp;
+        }
         (*av_pairs)[*out_size] = av_pair_aux;
         (*out_size)++;
     }
@@ -1166,15 +1192,41 @@ ntlm_parser_error ntlm_v2_response_payload_parse(ntlm_blob_t *blob, ntlm_v2_resp
     if ((res = ntlm_ctx_buffer_read_u32(&ntlm_v2_buff_ctx, &c->reserved_3)) < NTLM_PARSER_OK) return res;
 
     // Leggiamo AvPairs 
-    if ((res = parse_av_pairs(&ntlm_v2_buff_ctx, &c->av_pairs, &c->av_pairs_size)) < NTLM_PARSER_OK) return res;
+    if ((res = parse_av_pairs(&ntlm_v2_buff_ctx, &c->av_pairs, &c->av_pairs_size, &c->av_pairs_dim)) < NTLM_PARSER_OK) return res;
 
     return NTLM_PARSER_OK;
 }
 
-ntlm_parser_error ntlm_response_payload_parse(ntlm_blob_t *blob, ntlm_response_t *resp) {}
+ntlm_parser_error lm_v2_response_payload_parse(ntlm_blob_t *blob, lm_v2_response_t *resp) {
+    if (!blob || !resp) return NTLM_PARSER_ERROR_INVALID_ARGS;
+    if (!blob->data) return NTLM_PARSER_ERROR_INVALID_BLOB;
 
-ntlm_parser_error lm_v2_response_payload_parse(ntlm_blob_t *blob, lm_v2_response_t *resp) {}
-ntlm_parser_error lm_response_response_payload_parse(ntlm_blob_t *blob, lm_response_t *resp) {}
+    memset(resp, 0, sizeof(*resp));
+
+    ntlm_parser_error res;
+    ntlm_buffer_ctx_t lm_v2_buff_ctx;
+
+    if ((res = ntlm_ctx_buffer_init(blob->data, blob->len, &lm_v2_buff_ctx)) < NTLM_PARSER_OK) return res;
+
+    // Leggiamo Response (16 bytes) e ChallengeFromClient
+    if ((res = generic_n_bytes_read(&lm_v2_buff_ctx, resp->response, LM_V2_RESPONSE_SIZE)) < NTLM_PARSER_OK) return res;
+    if ((res = ntlm_ctx_buffer_read_u64(&lm_v2_buff_ctx, &resp->challenge_from_client)) < NTLM_PARSER_OK) return res;
+
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error target_info_payload_parse(ntlm_blob_t *blob, av_pair_t ***av_pairs, size_t *out_size, size_t *out_dim) {
+    if (!blob || !av_pairs || !out_size || !out_dim) return NTLM_PARSER_ERROR_INVALID_ARGS;
+    if (!blob->data) return NTLM_PARSER_ERROR_INVALID_BLOB;
+
+    ntlm_parser_error res;
+    ntlm_buffer_ctx_t av_pairs_buff_ctx;
+
+    if ((res = ntlm_ctx_buffer_init(blob->data, blob->len, &av_pairs_buff_ctx)) < NTLM_PARSER_OK) return res;
+    if ((res = parse_av_pairs(&av_pairs_buff_ctx, av_pairs, out_size, out_dim)) < NTLM_PARSER_OK) return res;
+
+    return NTLM_PARSER_OK;
+}
 
 /********************* Main Parser **************************/
 
@@ -1199,18 +1251,34 @@ ntlm_parser_error parse_ntlm_msg(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg)
     if ((res = parse_ntlm_msg_header(ctx_buffer, msg)) < NTLM_PARSER_OK) return res;
     if ((res = parse_ntlm_msg_payload(ctx_buffer, msg)) < NTLM_PARSER_OK) return res;
 
-    // Facciamo Decoding dei campi TODO:
-    
     return NTLM_PARSER_OK;
 }
 
 /******************************************/
-//           Getter Helper functions
+//           Helper functions
 /******************************************/
 
+// Funzione di log generica della libreria
+void ntlm_log(const char *format, ...) {
+    va_list args;               // lista di argomenti variabili
+    va_start(args, format);     // inizializza va_list con l'ultimo parametro noto
+
+    vprintf(format, args);      // stampa tutto usando vprintf
+
+    va_end(args);               // libera le risorse di va_list
+}
+
+ntlm_parser_error dump_utf16_le_string() {}
+
+ntlm_parser_error dump_header_field() {}
+ntlm_parser_error dump_av_pairs() {}
+
+ntlm_parser_error dump_msg() {
+
+}
 
 int main() {
-
+    
     const uint8_t ntlm_negotiate[] = {
         0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, 0x01, 0x00, 0x00, 0x00, 0x15, 0x82, 0x08, 0x62,
         0x00, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00,
@@ -1273,7 +1341,7 @@ int main() {
     ntlm_parser_error res;
 
     ntlm_buffer_ctx_t ctx_buffer;
-    res = ntlm_ctx_buffer_init(ntlm_authenticate, 496, &ctx_buffer);
+    res = ntlm_ctx_buffer_init(ntlm_challenge, 218, &ctx_buffer);
 
     if (res < NTLM_PARSER_OK) {
         printf("Errore: 0x%x\n", res);
@@ -1452,6 +1520,47 @@ int main() {
             }
             printf("\n");
     }
+
+    //ntlm_v2_response_t resp;
+    //if ((res = ntlm_v2_response_payload_parse(&msg.payload.ntlm_authenticate_msg_payload.nt_challenge_response, &resp)) < NTLM_PARSER_OK) {
+    //    printf("Errore ntlm_v2_response_payload_parse 0x%x \n", res);
+    //    return 1;
+    //}
+
+    //printf("%d\n", resp.ntlm_v2_client_challenge.av_pairs_size);
+
+    av_pair_t **av_pairs;
+    size_t outsize, outdim;
+    if ((res = target_info_payload_parse(&msg.payload.ntlm_challenge_msg_payload.target_info, &av_pairs, &outsize, &outdim)) < NTLM_PARSER_OK) {
+        printf("Errore ntlm_v2_response_payload_parse 0x%x \n", res);
+        return 1;
+    }
+    printf("%d\n", outsize);
+    
+    iconv_t cd = iconv_open("UTF-8", "UTF-16LE");
+    if (cd == (iconv_t)-1) {
+        perror("iconv_open");
+        return 1;
+    }
+
+    char utf8_buf[100];
+    char *outbuf = utf8_buf;
+    size_t outbytesleft = sizeof(utf8_buf) - 1; 
+
+    char *inbuf = (char *)av_pairs[1]->value;
+    size_t len = (size_t)av_pairs[1]->av_len;
+
+    if (iconv(cd, &inbuf, &len, &outbuf, &outbytesleft) == (size_t)-1) {
+        perror("iconv");
+        iconv_close(cd);
+        return 1;
+    }
+
+    iconv_close(cd);
+
+    // Stampiamo usando la lunghezza calcolata
+    size_t utf8_len = sizeof(utf8_buf) - 1 - outbytesleft;
+    printf("UTF-8: %.*s\n", (int)utf8_len, utf8_buf);
 
     printf("OK\n");
 
