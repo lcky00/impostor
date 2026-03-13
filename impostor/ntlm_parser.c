@@ -41,6 +41,7 @@
 #define NTLM_PARSER_ERROR_ALLOC_AV_PAIR                 0x80000012
 #define NTLM_PARSER_ERROR_MAX_AV_PAIR_REACHED           0x80000013
 #define NTLM_PARSER_ERROR_LEN_AV_PAIR                   0x80000014
+#define NTLM_PARSER_ERROR_CONVERSION                    0x80000015    
 
 typedef int32_t ntlm_parser_error;
 
@@ -1268,13 +1269,157 @@ void ntlm_log(const char *format, ...) {
     va_end(args);               // libera le risorse di va_list
 }
 
-ntlm_parser_error dump_utf16_le_string() {}
+ntlm_parser_error dump_utf16_le_string(const uint8_t *data, size_t len) {
+    if (!data || len == 0) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
-ntlm_parser_error dump_header_field() {}
-ntlm_parser_error dump_av_pairs() {}
+    // Prepariamo iconv
+    iconv_t cd = iconv_open("UTF-8", "UTF-16LE");
+    if (cd == (iconv_t)-1) return NTLM_PARSER_ERROR_CONVERSION;
 
-ntlm_parser_error dump_msg() {
+    size_t inbytesleft = len;
+    char *inbuf = (char *)data;
 
+    // buffer di output sufficientemente grande (UTF-8 può usare fino a 4 byte per carattere)
+    size_t outlen = len * 2 + 1;  
+    char *outbuf = malloc(outlen);
+    if (!outbuf) {
+        iconv_close(cd);
+        return NTLM_PARSER_ERROR_CONVERSION;
+    }
+
+    char *outptr = outbuf;
+    size_t outbytesleft = outlen;
+
+    // Conversione
+    if (iconv(cd, &inbuf, &inbytesleft, &outptr, &outbytesleft) == (size_t)-1) {
+        free(outbuf);
+        iconv_close(cd);
+        return NTLM_PARSER_ERROR_CONVERSION;
+    }
+
+    // Stampiamo la stringa convertita
+    *outptr = '\0';  // terminatore
+    ntlm_log("%s\n", outbuf);
+
+    free(outbuf);
+    iconv_close(cd);
+
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error dump_header_field(const char *name, const header_fields_t *field) {
+    if (!field) return NTLM_PARSER_ERROR_INVALID_ARGS;
+
+    ntlm_log("Header Field %s:\n", name);
+    ntlm_log("  len: %u\n", field->len);
+    ntlm_log("  max_len: %u\n", field->max_len);
+    ntlm_log("  buffer_offset: %u\n", field->buffer_offset);
+
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error dump_av_pairs(av_pair_t **av_pairs, size_t size) {
+    if (!av_pairs) return NTLM_PARSER_ERROR_INVALID_ARGS;
+
+    ntlm_parser_error res;
+
+    ntlm_log("AV Pairs [%zu]:\n", size);
+    for (size_t i = 0; i < size; i++) {
+        if (!av_pairs[i]) continue;
+        
+        ntlm_log("  AV ID: 0x%04x, Len: %u, Value: ", av_pairs[i]->av_id, av_pairs[i]->av_len);
+
+        if (av_pairs[i]->av_id == MSV_AV_CHANNEL_BINDINGS || 
+            av_pairs[i]->av_id == MSV_AV_SINGLE_HOST || 
+            av_pairs[i]->av_id == MSV_AV_TIMESTAMP || 
+            av_pairs[i]->av_id == MSV_AV_FLAGS) {
+            
+            for (uint16_t j = 0; j < av_pairs[i]->av_len; j++) {
+                ntlm_log("%02x ", av_pairs[i]->value[j]);
+            }
+            ntlm_log("\n");
+            
+        }
+        
+        else {
+        res = dump_utf16_le_string(av_pairs[i]->value, av_pairs[i]->av_len);
+        if (res < NTLM_PARSER_OK) return res;
+
+        }
+        
+    }
+
+    return NTLM_PARSER_OK;
+}
+
+ntlm_parser_error dump_msg(ntlm_msg_t *msg) {
+    if (!msg) return NTLM_PARSER_ERROR_INVALID_ARGS;
+
+    ntlm_parser_error res;
+
+    ntlm_log("NTLM Message Type: %u\n", msg->header.message_type);
+
+    switch (msg->header.message_type) {
+        case NEGOTIATE_MESSAGE:
+            dump_header_field("DomainName", &msg->header.msg_header.ntlm_negotiate_msg_header.domain_name_fields);
+            dump_header_field("Workstation", &msg->header.msg_header.ntlm_negotiate_msg_header.workstation_fields);
+            dump_utf16_le_string(msg->payload.ntlm_negotiate_msg_payload.domain_name.data,
+                                 msg->payload.ntlm_negotiate_msg_payload.domain_name.len);
+            dump_utf16_le_string(msg->payload.ntlm_negotiate_msg_payload.workstation_name.data,
+                                 msg->payload.ntlm_negotiate_msg_payload.workstation_name.len);
+            break;
+
+        case CHALLENGE_MESSAGE:
+            dump_header_field("TargetName", &msg->header.msg_header.ntlm_challenge_msg_header.target_name_fields);
+            dump_header_field("TargetInfo", &msg->header.msg_header.ntlm_challenge_msg_header.target_info_fields);
+
+            av_pair_t **av_pairs;
+            size_t outsize, outdim;
+            if ((res = target_info_payload_parse(&msg->payload.ntlm_challenge_msg_payload.target_info, &av_pairs, &outsize, &outdim)) < NTLM_PARSER_OK) {
+                return res;
+            }
+
+            dump_av_pairs(av_pairs, outsize);
+            break;
+
+        case AUTHENTICATE_MESSAGE:
+            dump_header_field("LmChallengeResponseFields", &msg->header.msg_header.ntlm_authenticate_msg_header.lm_challenge_resp_fields);
+            dump_header_field("NtChallengeResponseFields", &msg->header.msg_header.ntlm_authenticate_msg_header.nt_challenge_resp_fields);
+            dump_header_field("DomainNameFields", &msg->header.msg_header.ntlm_authenticate_msg_header.domain_name_fields);
+
+            dump_header_field("UserNameFields", &msg->header.msg_header.ntlm_authenticate_msg_header.username_fields);
+            dump_header_field("WorkstationFields", &msg->header.msg_header.ntlm_authenticate_msg_header.workstation_fields);
+            dump_header_field("EncryptedRandomSessionKeyFields", &msg->header.msg_header.ntlm_authenticate_msg_header.encrypted_random_session_key_fields);
+            
+            ntlm_log("NtChallengeResponse ");
+            
+            if (msg->payload.ntlm_authenticate_msg_payload.ntlm_response_type == NTLM_RESPONSE_V2) {
+                ntlm_log("(NTLM_V2):\n");
+                ntlm_v2_response_t tmp;
+                res = ntlm_v2_response_payload_parse(&msg->payload.ntlm_authenticate_msg_payload.nt_challenge_response, &tmp);
+                if (res < NTLM_PARSER_OK) return res;
+                res = dump_av_pairs(tmp.ntlm_v2_client_challenge.av_pairs, tmp.ntlm_v2_client_challenge.av_pairs_size);
+                if (res < NTLM_PARSER_OK) return res;
+                ntlm_av_pairs_free(&tmp.ntlm_v2_client_challenge.av_pairs, tmp.ntlm_v2_client_challenge.av_pairs_size);
+            }
+
+            ntlm_log("DomainName: ");
+            dump_utf16_le_string(msg->payload.ntlm_authenticate_msg_payload.domain_name.data, msg->payload.ntlm_authenticate_msg_payload.domain_name.len);
+
+            ntlm_log("UserName: ");
+            dump_utf16_le_string(msg->payload.ntlm_authenticate_msg_payload.username.data, msg->payload.ntlm_authenticate_msg_payload.username.len);
+
+            ntlm_log("Workstation: ");
+            dump_utf16_le_string(msg->payload.ntlm_authenticate_msg_payload.workstation_name.data, msg->payload.ntlm_authenticate_msg_payload.workstation_name.len);
+
+            break;
+
+        default:
+            ntlm_log("Unknown NTLM message type\n");
+            return NTLM_PARSER_ERROR_INVALID_MSG_TYPE;
+    }
+
+    return NTLM_PARSER_OK;
 }
 
 int main() {
@@ -1341,7 +1486,7 @@ int main() {
     ntlm_parser_error res;
 
     ntlm_buffer_ctx_t ctx_buffer;
-    res = ntlm_ctx_buffer_init(ntlm_challenge, 218, &ctx_buffer);
+    res = ntlm_ctx_buffer_init(ntlm_authenticate, 496, &ctx_buffer);
 
     if (res < NTLM_PARSER_OK) {
         printf("Errore: 0x%x\n", res);
@@ -1355,6 +1500,12 @@ int main() {
         return 1;
     }
 
+    res = dump_msg(&msg);
+    if (res < NTLM_PARSER_OK) {
+        printf("Errore: 0x%x\n", res);
+        return 1;
+    }
+    /**
     printf("Signature: %s (", msg.header.signature);
     for (size_t i = 0; i < NTLM_HEADER_SIGNATURE_SIZE; i++) {
         printf("0x%x ", msg.header.signature[i]);
@@ -1536,31 +1687,9 @@ int main() {
         return 1;
     }
     printf("%d\n", outsize);
-    
-    iconv_t cd = iconv_open("UTF-8", "UTF-16LE");
-    if (cd == (iconv_t)-1) {
-        perror("iconv_open");
-        return 1;
-    }
 
-    char utf8_buf[100];
-    char *outbuf = utf8_buf;
-    size_t outbytesleft = sizeof(utf8_buf) - 1; 
-
-    char *inbuf = (char *)av_pairs[1]->value;
-    size_t len = (size_t)av_pairs[1]->av_len;
-
-    if (iconv(cd, &inbuf, &len, &outbuf, &outbytesleft) == (size_t)-1) {
-        perror("iconv");
-        iconv_close(cd);
-        return 1;
-    }
-
-    iconv_close(cd);
-
-    // Stampiamo usando la lunghezza calcolata
-    size_t utf8_len = sizeof(utf8_buf) - 1 - outbytesleft;
-    printf("UTF-8: %.*s\n", (int)utf8_len, utf8_buf);
+    dump_utf16_le_string(av_pairs[1]->value, av_pairs[1]->av_len);
+    */
 
     printf("OK\n");
 
