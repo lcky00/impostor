@@ -940,12 +940,20 @@ ntlm_parser_error parse_ntlm_msg(ntlm_buffer_ctx_t *ctx_buffer, ntlm_msg_t *msg)
 //           Helper functions
 /******************************************/
 
+static ntlm_logger_t logger = NULL;
+
+void set_ntlm_logger(ntlm_logger_t logger_cb) {
+    logger = logger_cb;
+}
+
 // Funzione di log generica della libreria
 void ntlm_log(const char *format, ...) {
+    if (logger == NULL) return;
+
     va_list args;               // lista di argomenti variabili
     va_start(args, format);     // inizializza va_list con l'ultimo parametro noto
 
-    vprintf(format, args);      // stampa tutto usando vprintf
+    logger(format, args);       // Usa logger utente
 
     va_end(args);               // libera le risorse di va_list
 }
@@ -1103,9 +1111,15 @@ ntlm_parser_error dump_msg(ntlm_msg_t *msg) {
 }
 
 
-# if 0
+# if 1
+
+void custom_logger(const char *format, va_list args) {
+    vprintf(format, args);
+}
 
 int main() {
+
+    set_ntlm_logger(custom_logger);
     
     const uint8_t ntlm_negotiate[] = {
         0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x00, 0x01, 0x00, 0x00, 0x00, 0x15, 0x82, 0x08, 0x62,

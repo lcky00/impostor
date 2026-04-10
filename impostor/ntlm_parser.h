@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
 /* Errori parsing */
 #define NTLM_PARSER_OK                                  0x00000000
@@ -343,6 +344,10 @@ ntlm_parser_error free_ntlm_msg(ntlm_msg_t *msg);
 void ntlm_av_pairs_free(av_pair_t ***av_pairs, size_t len);
 
 /* Debugging & Utils */
+typedef void (*ntlm_logger_t)(const char *format, va_list args);
+
+void set_ntlm_logger(ntlm_logger_t logger_cb);
+
 void ntlm_log(const char *format, ...);
 ntlm_parser_error dump_msg(ntlm_msg_t *msg);
 ntlm_parser_error dump_av_pairs(av_pair_t **av_pairs, size_t size);
