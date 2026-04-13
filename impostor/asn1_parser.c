@@ -986,7 +986,7 @@ void asn1_print(const asn1_obj *obj, int indent) {
     }
 }
 
-#if 0
+#if 1
 
 int main() {
 
@@ -1056,7 +1056,7 @@ int main() {
                                0xd9, 0x34, 0x25, 0xe6, 0x04, 0x32, 0xc4, 0x60, 0xf2, 0x7e, 0x1c, 0xa5, 0x35, 0xbe, 0xf6, 0x22};
     
     asn1_obj *out;
-    asn1_parser_error err = parse(buffer4, 512, &out);
+    asn1_parser_error err = parse(buffer3, 74, &out);
 
     if (err < PARSER_OK) {
         printf("Error: 0x%x\n", err);
