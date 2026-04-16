@@ -87,6 +87,17 @@
 
 #define PARSER_OK 0x00000000
 
+#define ERROR_INVALID_ARGS 0x80000001
+#define ERROR_UNSAFE_LEN 0x80000002
+#define ERROR_ALLOCATION 0x80000003
+#define ERROR_INVALID_BUFFER_DATA 0x80000004
+#define ERROR_PARSER_MAX_NUM_BYTES_FOR_LEN 0x80000005
+#define ERROR_UNSAFE_BUFFER_OFFSET 0x80000006
+#define ERROR_REALLOC 0x80000007
+#define ERROR_DATA_ALREADY_ALLOC 0x80000008
+#define ERROR_NOTHING_TO_REALLOC 0x80000009
+
+
 typedef int32_t asn1_parser_error_t;
 
 /**************************************************/
@@ -187,7 +198,7 @@ asn1_parser_error_t tlv_extract_len(ctx_buffer_t buffer, size_t offset, uint8_t 
 /**
  * Returns in out a pointer to a new asn1 node
  */
-asn1_parser_error_t asn1_node_new(asn1_node_t *out);
+asn1_parser_error_t asn1_node_new(asn1_node_t **out);
 
 
 /**************************************************/
