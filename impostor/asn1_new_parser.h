@@ -205,16 +205,22 @@ asn1_parser_error_t asn1_node_new(asn1_node_t **out);
 //                Stack Utils
 /**************************************************/
 
-asn1_parser_error_t parser_stack_new(parser_stack_t *out);
+/**
+ * Create new stack , new stack entry and function for check emptiness
+ */
+asn1_parser_error_t parser_stack_new(parser_stack_t **out);
+asn1_parser_error_t parser_entry_stack_new(asn1_node_t *node, tlv_t tlv, parser_entry_stack_t **out);
+asn1_parser_error_t parser_stack_empty(parser_stack_t *stack, uint8_t *out);
 
-asn1_parser_error_t parser_entry_stack_new(asn1_node_t *node, tlv_t tlv, parser_entry_stack_t *out);
-
-asn1_parser_error_t parser_stack_empty(parser_stack_t *stack);
-
+/**
+ * Free functions for stack entry and for stack
+ */
 asn1_parser_error_t parser_stack_free_entry(parser_entry_stack_t **entry);
+asn1_parser_error_t parser_stack_free(parser_stack_t **stack);
 
-asn1_parser_error_t parser_stack_free(parser_stack_t **entry);
-
+/**
+ * Utilities for stack
+ */
 asn1_parser_error_t parser_stack_push(parser_stack_t *stack, parser_entry_stack_t *entry);
 asn1_parser_error_t parser_stack_pop(parser_stack_t *stack);
 asn1_parser_error_t parser_stack_top(parser_stack_t *stack, parser_entry_stack_t **out);

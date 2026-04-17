@@ -3,6 +3,8 @@
 #include <string.h>
 
 #define ASN1_NODE_INIT_ALLOC_CHILD 10
+#define ASN1_STACK_INIT_ALLOC 10
+#define PARSER_STACK_MAX_SIZE 16
 
 /**************************************************/
 //                Parser Utils
@@ -180,8 +182,167 @@ asn1_parser_error_t asn1_node_new(asn1_node_t **out) {
 //                Stack Utils
 /**************************************************/
 
+asn1_parser_error_t parser_stack_new(parser_stack_t **out) {
+    if (!out) return -1;
+
+    // Check if is already allocated
+    if (*out) return -1;
+
+    *out = calloc(1, sizeof(parser_stack_t));
+    if (!*out) return -1;
+
+    // Allocate initial entries
+    (*out)->stack_entries = calloc(ASN1_STACK_INIT_ALLOC, sizeof(parser_entry_stack_t *));
+    if (!(*out)->stack_entries) {
+        free(*out);
+        *out = NULL;
+        return -1;
+    }
+
+    (*out)->dim = ASN1_STACK_INIT_ALLOC;
+
+    return PARSER_OK;
+}
+
+/**
+ * precondition: tlv is already safe. No tlv safety check is performed 
+ */
+asn1_parser_error_t parser_entry_stack_new(asn1_node_t *node, tlv_t tlv, parser_entry_stack_t **out) {
+    if (!out || !node) return -1;
+
+    // Check is is already allocated
+    if (*out) return -1;
+
+    *out = calloc(1, sizeof(parser_entry_stack_t));
+    if (!*out) return -1;
+
+    (*out)->node = node;
+    (*out)->tlv = tlv;
+
+    return PARSER_OK;
+}
 
 
+asn1_parser_error_t parser_stack_empty(parser_stack_t *stack, uint8_t *out) {
+    if (!stack) return -1;
 
+    return stack->size == 0;
+}
+
+/**
+ * Free stack entry NOT the ASN1 node inside.
+ */
+asn1_parser_error_t parser_stack_free_entry(parser_entry_stack_t **entry) {
+    if (!entry || !*entry) return -1;
+
+    free(*entry);
+    *entry = NULL;
+
+    return PARSER_OK;
+}
+
+asn1_parser_error_t parser_stack_free(parser_stack_t **stack) {
+    if (!stack || !*stack) return -1;
+
+    size_t dim, size;
+    dim = (*stack)->dim;
+    size = (*stack)->size;
+    parser_entry_stack_t **s = (*stack)->stack_entries;
+
+    // Free stack entries
+    for (size_t i = 0; i < dim; i++) {
+        if (s[i]) {
+            parser_stack_free_entry(&s[i]);
+        }
+    }
+
+    free(*stack);
+    *stack = NULL;
+
+    return PARSER_OK;
+}
+
+static asn1_parser_error_t parser_stack_expand(parser_stack_t *stack) {
+    if (!stack) return -1;
+
+    if (!stack->stack_entries) return -1;
+
+    size_t new_dim = stack->dim * 2;
+    parser_entry_stack_t **new_ptr = realloc(stack->stack_entries, sizeof(parser_entry_stack_t*) * new_dim);
+    if (!new_ptr) return -1;
+
+    stack->stack_entries = new_ptr;
+    stack->dim = new_dim;
+
+    return PARSER_OK;
+
+}
+
+asn1_parser_error_t parser_stack_push(parser_stack_t *stack, parser_entry_stack_t *entry){
+    if (!stack || !entry) return -1;
+
+    // Check if list entries is allocated
+    if (!stack->stack_entries) return -1;
+
+    // Check if we reach the max nesting level
+    if (stack->size >= PARSER_STACK_MAX_SIZE) return -1;
+
+    // Check available space
+    asn1_parser_error_t res;
+    if (stack->size >= stack->dim) {
+        // Reallocate stack with more space
+        if ((res = parser_stack_expand(stack)) < PARSER_OK) 
+            return res;
+    }
+
+    // Push the entry
+    stack->stack_entries[stack->size++] = entry;
+
+    return PARSER_OK;
+}
+
+asn1_parser_error_t parser_stack_pop(parser_stack_t *stack) {
+    if (!stack) return -1;
+
+    // Check if list entries is allocated
+    if (!stack->stack_entries) return -1;
+
+    asn1_parser_error_t res;
+
+    // Check if is empty
+    uint8_t empty = 0;
+    if ((res = parser_stack_empty(stack, &empty)) < PARSER_OK)
+        return res;
+
+    if (empty) return -1;
+
+    // Free the entry
+    if ((res = parser_stack_free_entry(stack->stack_entries[stack->size - 1])) < PARSER_OK)
+        return res;
+
+    stack->size--;
+
+    return PARSER_OK;    
+}
+
+asn1_parser_error_t parser_stack_top(parser_stack_t *stack, parser_entry_stack_t **out) {
+    if (!stack || !out) return -1;
+
+    // Check if list entries is allocated
+    if (!stack->stack_entries) return -1;
+
+    asn1_parser_error_t res;
+
+    // Check if is empty
+    uint8_t empty = 0;
+    if ((res = parser_stack_empty(stack, &empty)) < PARSER_OK)
+        return res;
+
+    if (empty) return -1;
+
+    *out = stack->stack_entries[stack->size - 1];
+
+    return PARSER_OK;
+}
 
 
