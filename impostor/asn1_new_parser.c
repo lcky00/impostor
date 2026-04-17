@@ -345,4 +345,48 @@ asn1_parser_error_t parser_stack_top(parser_stack_t *stack, parser_entry_stack_t
     return PARSER_OK;
 }
 
+/**************************************************/
+//                Main Parser
+/**************************************************/
+
+static asn1_parser_error_t parse_constructed_node() {}
+static asn1_parser_error_t parse_primitive_node() {}
+
+asn1_parser_error_t parse(uint8_t *buffer, size_t len, asn1_node_t **out) {
+    // Costruzione primo nodo:
+    // - estrazione TLV
+    // - push stack
+    
+    // Finchè stack pieno:
+    // - Top dallo stack:
+    //   - Se primitive:
+    //     - riempio il nodo con il value
+    //     - Pop stack
+    //     - Top dallo stack e inserisco nella lista del nodo da cui ho fatto top
+    //       Se top è vuoto allora c'è solo qusto nodo, niente push sul parent
+    //     - Pop dallo stack
+    //
+    //   - Se constructed:
+    //     - controllo della ret_len per vedere se ha raggiunto il massimo della dim 
+    //       da size tlv
+    //     - check per vedere se ha allocato child list: nel caso allocare, vuol dire che è stato 
+    //       preso dallo stack per le prima volta.
+    //     - se ret_len == tlv_len: 
+    //       - push del nodo sul nodo del top dello stack
+    //       - aggiornamento ret_len del parent
+    //       - pop stack
+    //     - se ret_len < tlv_len:
+    //       - extract tlv da Value in tlv
+    //       - creazione entry stack, creazione nodo asn1; metto nodo e tlv in stack entry.
+    //       - push sullo stack 
+    //
+    //     - else (ret_len > tlv_len): errore
+
+}
+
+/*********************************************/
+
+int main() {
+
+}
 
