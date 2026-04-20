@@ -41,7 +41,7 @@ asn1_parser_error_t ctx_buffer_read(ctx_buffer_t buffer, size_t start_offset, si
     *out = calloc(bytes_to_read, sizeof(uint8_t));
     if (!*out) return ERROR_ALLOCATION;
 
-    memcpy(*out, buffer.data[start_offset], bytes_to_read);
+    memcpy(*out, buffer.data + start_offset, bytes_to_read);
 
     return PARSER_OK;
 }
@@ -81,7 +81,7 @@ asn1_parser_error_t tlv_extract_len(ctx_buffer_t buffer, size_t offset, uint8_t 
             *len = (*len << 8) | b;
             cpy_num_bytes--;
         }
-        *num_bytes++; // Add Tag Byte
+        *num_bytes += 1; // Add Tag Byte
 
     }
     // Short-form
@@ -310,9 +310,10 @@ asn1_parser_error_t parser_entry_stack_new(asn1_node_t *node, tlv_t tlv, parser_
 
 
 asn1_parser_error_t parser_stack_empty(parser_stack_t *stack, uint8_t *out) {
-    if (!stack) return -1;
+    if (!stack || !out) return -1; // Aggiunto controllo su out
 
-    return stack->size == 0;
+    *out = (stack->size == 0);
+    return PARSER_OK;
 }
 
 /**
@@ -403,7 +404,7 @@ asn1_parser_error_t parser_stack_pop(parser_stack_t *stack) {
     if (empty) return -1;
 
     // Free the entry
-    if ((res = parser_stack_free_entry(stack->stack_entries[stack->size - 1])) < PARSER_OK)
+    if ((res = parser_stack_free_entry(&stack->stack_entries[stack->size - 1])) < PARSER_OK)
         return res;
 
     stack->size--;
