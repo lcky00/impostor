@@ -200,6 +200,9 @@ asn1_parser_error_t tlv_extract_len(ctx_buffer_t buffer, size_t offset, uint8_t 
  */
 asn1_parser_error_t asn1_node_new(asn1_node_t **out);
 
+void asn1_node_free(asn1_node_t **node);
+asn1_parser_error_t asn1_tree_free(asn1_node_t **tree);
+
 
 /**************************************************/
 //                Stack Utils

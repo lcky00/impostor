@@ -178,6 +178,92 @@ asn1_parser_error_t asn1_node_new(asn1_node_t **out) {
     return PARSER_OK;
 }
 
+static void asn1_node_free(asn1_node_t **node) {
+    if (!node || !*node) return;
+
+    // If is a primitive node
+    if ((*node)->data) { 
+        free((*node)->data);
+        (*node)->data = NULL;
+    }
+
+    // If is a constructed node
+    if ((*node)->child_nodes) {
+        free((*node)->child_nodes);
+        (*node)->child_nodes = NULL;
+    }
+
+    free(*node);
+    *node = NULL;
+}
+
+static void asn1_tree_free_recv(asn1_node_t *node) {
+    if (!node) return;
+
+    for (size_t i = 0; i < node->size; i++) {
+        asn1_tree_free_recv(node->child_nodes[i]);
+    }
+
+    asn1_node_free(&node);
+}
+
+asn1_parser_error_t asn1_tree_free(asn1_node_t **tree) {
+    if (!tree || !*tree) return -1;
+
+    asn1_parser_error_t res;
+
+    // Initialize auxiliary stack for free the tree
+    size_t stack_top = 0;
+    size_t stack_dim = 100;
+    asn1_node_t **stack_free = calloc(stack_dim, sizeof(asn1_node_t *));
+    if (!stack_free) return -1;
+    
+    // Push the first node in the stack
+    stack_free[0] = *tree;
+    stack_top++;
+
+    while (stack_top > 0) {
+        // Top from the stack
+        asn1_node_t *aux = stack_free[--stack_top];
+        // Push each childs in the satck for free
+        for (size_t i = 0; i < aux->size; i++) {
+
+            // Check if there is space
+            if (stack_top == stack_dim) {
+                asn1_node_t **tmp = realloc(stack_free, sizeof(asn1_node_t *) * stack_dim * 2);
+                
+                // If realloc fails, heap is full, try with recursion for stack memory
+                if (!tmp) {
+                    stack_top -= i;
+                    while(stack_top > 0) {
+                        asn1_node_t *node = stack_free[--stack_top];
+                        asn1_tree_free_recv(node);
+                    }
+                    free(stack_free);
+
+                    // Free aux that is outside from stack
+                    asn1_tree_free_recv(aux);
+
+                    *tree = NULL;
+
+                    return PARSER_OK;
+                }
+
+                stack_dim *= 2;
+                stack_free = tmp;
+            }
+
+            stack_free[stack_top++] = aux->child_nodes[i];
+        }
+        // Free the node
+        asn1_node_free(&aux);
+    }
+    
+    free(stack_free);
+    *tree = NULL;
+    return PARSER_OK;
+}
+
 /**************************************************/
 //                Stack Utils
 /**************************************************/
@@ -381,6 +467,45 @@ asn1_parser_error_t parse(uint8_t *buffer, size_t len, asn1_node_t **out) {
     //       - push sullo stack 
     //
     //     - else (ret_len > tlv_len): errore
+
+    if (!buffer) return -1;
+    if (!out) return -1;
+
+    asn1_parser_error_t res;
+
+    // Build ctx_buffer
+    ctx_buffer_t ctx_buffer;
+    if ((res = ctx_buffer_new(buffer, len, &ctx_buffer)) < PARSER_OK)
+        return res;
+
+    // Build stack
+    parser_stack_t *stack;
+    if ((res = parser_stack_new(&stack)) < PARSER_OK)
+        return res;
+
+    // Extract first tlv
+    tlv_t tlv;
+    if((res = tlv_read_from_buffer(ctx_buffer, 0, &tlv)) < PARSER_OK) {
+        parser_stack_free(&stack);
+        return res;
+    }
+    // Build ASN1 node
+    asn1_node_t *root;
+    if ((res = asn1_node_new(&root)) < PARSER_OK) {
+        parser_stack_free(&stack);
+        return res;
+    }
+    root->tag = tlv.tag;
+
+    // Create first stack entry
+    parser_entry_stack_t *entry;
+    if((res = parser_entry_stack_new(root, tlv, &entry)) < PARSER_OK) {
+        parser_stack_free(&stack);
+        
+        return res;
+    }
+
+
 
 }
 
