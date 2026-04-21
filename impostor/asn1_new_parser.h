@@ -198,7 +198,7 @@ asn1_parser_error_t tlv_extract_len(ctx_buffer_t buffer, size_t offset, uint8_t 
 /**
  * Returns in out a pointer to a new asn1 node
  */
-asn1_parser_error_t asn1_node_new(asn1_node_t **out);
+asn1_parser_error_t asn1_node_new(asn1_node_t **out, asn1_tag_t tag);
 
 void asn1_node_free(asn1_node_t **node);
 asn1_parser_error_t asn1_tree_free(asn1_node_t **tree);
@@ -218,8 +218,8 @@ asn1_parser_error_t parser_stack_empty(parser_stack_t *stack, uint8_t *out);
 /**
  * Free functions for stack entry and for stack
  */
-asn1_parser_error_t parser_stack_free_entry(parser_entry_stack_t **entry);
-asn1_parser_error_t parser_stack_free(parser_stack_t **stack);
+void parser_stack_free_entry(parser_entry_stack_t **entry);
+void parser_stack_free(parser_stack_t **stack);
 
 /**
  * Utilities for stack

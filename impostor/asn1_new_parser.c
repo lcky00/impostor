@@ -166,7 +166,7 @@ static asn1_parser_error_t asn1_node_alloc_childs(asn1_node_t *out) {
     return PARSER_OK;
 }
 
-asn1_parser_error_t asn1_node_new(asn1_node_t **out) {
+asn1_parser_error_t asn1_node_new(asn1_node_t **out, asn1_tag_t tag) {
     if (!out) return ERROR_INVALID_ARGS;
 
     // Check if is already allocated
@@ -216,7 +216,13 @@ asn1_parser_error_t asn1_tree_free(asn1_node_t **tree) {
     size_t stack_top = 0;
     size_t stack_dim = 100;
     asn1_node_t **stack_free = calloc(stack_dim, sizeof(asn1_node_t *));
-    if (!stack_free) return -1;
+
+    // If calloc fails, heap is full, try with recursion for stack memory
+    if (!stack_free) {
+        asn1_tree_free_recv(*tree);
+        *tree = NULL;
+        return PARSER_OK;
+    }
     
     // Push the first node in the stack
     stack_free[0] = *tree;
@@ -319,17 +325,15 @@ asn1_parser_error_t parser_stack_empty(parser_stack_t *stack, uint8_t *out) {
 /**
  * Free stack entry NOT the ASN1 node inside.
  */
-asn1_parser_error_t parser_stack_free_entry(parser_entry_stack_t **entry) {
-    if (!entry || !*entry) return -1;
+void parser_stack_free_entry(parser_entry_stack_t **entry) {
+    if (!entry || !*entry) return;
 
     free(*entry);
     *entry = NULL;
-
-    return PARSER_OK;
 }
 
-asn1_parser_error_t parser_stack_free(parser_stack_t **stack) {
-    if (!stack || !*stack) return -1;
+void parser_stack_free(parser_stack_t **stack) {
+    if (!stack || !*stack) return;
 
     size_t dim, size;
     dim = (*stack)->dim;
@@ -345,8 +349,6 @@ asn1_parser_error_t parser_stack_free(parser_stack_t **stack) {
 
     free(*stack);
     *stack = NULL;
-
-    return PARSER_OK;
 }
 
 static asn1_parser_error_t parser_stack_expand(parser_stack_t *stack) {
@@ -404,8 +406,7 @@ asn1_parser_error_t parser_stack_pop(parser_stack_t *stack) {
     if (empty) return -1;
 
     // Free the entry
-    if ((res = parser_stack_free_entry(&stack->stack_entries[stack->size - 1])) < PARSER_OK)
-        return res;
+    parser_stack_free_entry(&stack->stack_entries[stack->size - 1]);
 
     stack->size--;
 
@@ -425,7 +426,10 @@ asn1_parser_error_t parser_stack_top(parser_stack_t *stack, parser_entry_stack_t
     if ((res = parser_stack_empty(stack, &empty)) < PARSER_OK)
         return res;
 
-    if (empty) return -1;
+    if (empty) {
+        *out = NULL;
+        return PARSER_OK;
+    }
 
     *out = stack->stack_entries[stack->size - 1];
 
@@ -436,8 +440,20 @@ asn1_parser_error_t parser_stack_top(parser_stack_t *stack, parser_entry_stack_t
 //                Main Parser
 /**************************************************/
 
-static asn1_parser_error_t parse_constructed_node() {}
-static asn1_parser_error_t parse_primitive_node() {}
+static asn1_parser_error_t init_primitive_node_from_tlv(asn1_node_t *node, tlv_t tlv, ctx_buffer_t buffer) {
+    if (!node) return -1;
+
+    if (node->data) return -1; // Already allocated
+    if (node->child_nodes) return -1; // Try to init a constructed node to primitive
+
+    node->data = calloc(tlv.tag_value_len, sizeof(uint8_t));
+    if (!node->data) return -1;
+
+    node->data_dim = tlv.tag_value_len;
+    memcpy(node->data, buffer.data + tlv.offset_data, tlv.tag_value_len);
+
+    return PARSER_OK;
+}
 
 asn1_parser_error_t parse(uint8_t *buffer, size_t len, asn1_node_t **out) {
     // Costruzione primo nodo:
@@ -449,9 +465,8 @@ asn1_parser_error_t parse(uint8_t *buffer, size_t len, asn1_node_t **out) {
     //   - Se primitive:
     //     - riempio il nodo con il value
     //     - Pop stack
-    //     - Top dallo stack e inserisco nella lista del nodo da cui ho fatto top
-    //       Se top è vuoto allora c'è solo qusto nodo, niente push sul parent
-    //     - Pop dallo stack
+    //     - modifico ret_len del top
+    //       
     //
     //   - Se constructed:
     //     - controllo della ret_len per vedere se ha raggiunto il massimo della dim 
@@ -459,13 +474,13 @@ asn1_parser_error_t parse(uint8_t *buffer, size_t len, asn1_node_t **out) {
     //     - check per vedere se ha allocato child list: nel caso allocare, vuol dire che è stato 
     //       preso dallo stack per le prima volta.
     //     - se ret_len == tlv_len: 
-    //       - push del nodo sul nodo del top dello stack
     //       - aggiornamento ret_len del parent
     //       - pop stack
     //     - se ret_len < tlv_len:
     //       - extract tlv da Value in tlv
     //       - creazione entry stack, creazione nodo asn1; metto nodo e tlv in stack entry.
-    //       - push sullo stack 
+    //       - inserisce nei child del nodo attuale, non quello appen creato, il nodo appena creato
+    //       - push sullo stack. Se c'è abbastanza spazio, altrimenti realloc.
     //
     //     - else (ret_len > tlv_len): errore
 
@@ -492,20 +507,142 @@ asn1_parser_error_t parse(uint8_t *buffer, size_t len, asn1_node_t **out) {
     }
     // Build ASN1 node
     asn1_node_t *root;
-    if ((res = asn1_node_new(&root)) < PARSER_OK) {
+    if ((res = asn1_node_new(&root, tlv.tag)) < PARSER_OK) {
         parser_stack_free(&stack);
         return res;
     }
-    root->tag = tlv.tag;
 
     // Create first stack entry
     parser_entry_stack_t *entry;
     if((res = parser_entry_stack_new(root, tlv, &entry)) < PARSER_OK) {
         parser_stack_free(&stack);
-        
+        asn1_tree_free(&root);
         return res;
     }
 
+    // Push into the stack
+    if((res = parser_stack_push(stack, entry)) < PARSER_OK) {
+        parser_stack_free(&stack);
+        asn1_tree_free(&root);
+        return res;
+    }
+
+    while (1) {
+        uint8_t empty;
+        if ((res = parser_stack_empty(stack, &empty)) < PARSER_OK) {
+            parser_stack_free(&stack);
+            asn1_tree_free(&root);
+            return res;
+        }
+        // Check if stack is empty
+        if (empty) break;
+
+        // Top from stack
+        parser_entry_stack_t *top;
+        if ((res = parser_stack_top(stack, &top)) < PARSER_OK) {
+            parser_stack_free(&stack);
+            asn1_tree_free(&root);
+            return res;
+        }
+
+        asn1_node_t *top_node = top->node;
+        tlv_t top_tlv = top->tlv;
+
+        // If is primitive node
+        if (!IS_CONSTRUCTED_ASN1_TAG(top_node->tag)) {
+
+            // Popolate node from tlv and ctx_buffer
+            if ((res = init_primitive_node_from_tlv(top_node, top_tlv, ctx_buffer)) < PARSER_OK) {
+                parser_stack_free(&stack);
+                asn1_tree_free(&root);
+                return res;
+            }
+
+            // Pop primitive node
+            if ((res = parser_stack_pop(stack)) < PARSER_OK) {
+                parser_stack_free(&stack);
+                asn1_tree_free(&root);
+                return res;
+            }
+
+            // Top from stack to push primitive node in tree
+            if ((res = parser_stack_top(stack, &top)) < PARSER_OK) {
+                parser_stack_free(&stack);
+                asn1_tree_free(&root);
+                return res;
+            }
+
+            // If top is null, it means that the primitive node is the only node
+            // else:
+            if (top) {
+                // Update the ret_len of the "parent"
+                top->ret_len += sizeof(top_tlv.tag) + top_tlv.tag_value_len_bytes + top_tlv.tag_value_len;
+            }
+        }
+        
+        // If is constructed node
+        else {
+            // If all childs are parsed
+            if (top->ret_len == tlv.tag_value_len) {
+                // Pop from stack
+                if ((res = parser_stack_pop(stack)) < PARSER_OK) {
+                    parser_stack_free(&stack);
+                    asn1_tree_free(&root);
+                    return res;
+                }
+
+                // Update ret_len "parent" if exists
+                if ((res = parser_stack_top(stack, &top)) < PARSER_OK) {
+                    parser_stack_free(&stack);
+                    asn1_tree_free(&root);
+                    return res;
+                }
+
+                if (top) {
+                    top->ret_len += sizeof(top_tlv.tag) + top_tlv.tag_value_len_bytes + top_tlv.tag_value_len;
+                }
+            }
+
+            // There are more childs to parse
+            else if (top->ret_len < tlv.tag_value_len) {
+                
+                // Check if child_nodes list is allocated, otherwise allocate.
+                if (!top_node->child_nodes) {
+                    if ((asn1_node_alloc_childs(top_node)) < PARSER_OK) {
+                        parser_stack_free(&stack);
+                        asn1_tree_free(&root);
+                        return res;
+                    }
+                }
+
+                // Extract next tlv
+                size_t next_offset = tlv.offset_data + top->ret_len;
+                tlv_t tmp_tlv;
+                if ((tlv_read_from_buffer(ctx_buffer, next_offset, &tmp_tlv)) < PARSER_OK) {
+                    parser_stack_free(&stack);
+                    asn1_tree_free(&root);
+                    return res;
+                }
+
+                // Build Node, entry stack. then push node in child list parent
+                // push entry in stack.
+
+
+            }
+
+            // Error
+            else {
+                // Error: somethigs went wrong, FUCK!
+            }
+            
+
+
+
+        }
+
+
+    }
+    
 
 
 }
