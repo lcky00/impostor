@@ -80,6 +80,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
 /**************************************************/
 //                Errors
@@ -96,6 +97,21 @@
 #define ERROR_REALLOC 0x80000007
 #define ERROR_DATA_ALREADY_ALLOC 0x80000008
 #define ERROR_NOTHING_TO_REALLOC 0x80000009
+
+#define ERROR_INVALID_TREE 0x8000000a
+#define ERROR_STACK_ALREADY_ALLOC 0x8000000b
+#define ERROR_STACK_ENTRY_ALREADY_ALLOC 0x8000000c
+#define ERROR_INVALID_STACK 0x8000000d
+
+#define ERROR_MAX_NESTING_REACHED 0x8000000e
+#define ERROR_POP_FROM_EMPTY_STACK 0x8000000f
+
+#define ERROR_NODE_ALREADY_ALLOC 0x80000010
+#define ERROR_TRY_ALLOC_PRIM_NODE 0x80000020
+#define ERROR_INVALID_BUFFER 0x80000030
+
+#define ERROR_OVERFLOW 0x80000040
+
 
 
 typedef int32_t asn1_parser_error_t;
@@ -193,14 +209,13 @@ asn1_parser_error_t tlv_read_from_buffer(ctx_buffer_t buffer, size_t start_offse
  * Extract len from a bytes. Checks for short-form or long-form.
  * Returns num_bytes that encode len and the effective len.
  */
-asn1_parser_error_t tlv_extract_len(ctx_buffer_t buffer, size_t offset, uint8_t *num_bytes, uint64_t *len);
+asn1_parser_error_t tlv_extract_len(ctx_buffer_t buffer, size_t offset, size_t *num_bytes, uint64_t *len);
 
 /**
  * Returns in out a pointer to a new asn1 node
  */
 asn1_parser_error_t asn1_node_new(asn1_node_t **out, asn1_tag_t tag);
 
-void asn1_node_free(asn1_node_t **node);
 asn1_parser_error_t asn1_tree_free(asn1_node_t **tree);
 
 
@@ -232,6 +247,8 @@ asn1_parser_error_t parser_stack_top(parser_stack_t *stack, parser_entry_stack_t
 /**************************************************/
 //                Main Parser
 /**************************************************/
+
+typedef void (*asn1_logger_t)(size_t ident, const char *format, va_list args);
 
 asn1_parser_error_t parse(uint8_t *buffer, size_t len, asn1_node_t **out);
 

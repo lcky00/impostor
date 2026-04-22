@@ -1,6 +1,8 @@
 #include "asn1_new_parser.h"
 
 #include <string.h>
+#include <stdio.h>
+
 
 #define ASN1_NODE_INIT_ALLOC_CHILD 10
 #define ASN1_STACK_INIT_ALLOC 10
@@ -47,7 +49,7 @@ asn1_parser_error_t ctx_buffer_read(ctx_buffer_t buffer, size_t start_offset, si
 }
 
 
-asn1_parser_error_t tlv_extract_len(ctx_buffer_t buffer, size_t offset, uint8_t *num_bytes, uint64_t *len) {
+asn1_parser_error_t tlv_extract_len(ctx_buffer_t buffer, size_t offset, size_t *num_bytes, uint64_t *len) {
     if (!num_bytes || !len) return ERROR_INVALID_ARGS;
 
     if (!buffer.data) return ERROR_INVALID_BUFFER_DATA;
@@ -175,6 +177,8 @@ asn1_parser_error_t asn1_node_new(asn1_node_t **out, asn1_tag_t tag) {
     *out = calloc(1, sizeof(asn1_node_t));
     if (!*out) return ERROR_ALLOCATION;
 
+    (*out)->tag = tag;
+
     return PARSER_OK;
 }
 
@@ -208,7 +212,7 @@ static void asn1_tree_free_recv(asn1_node_t *node) {
 }
 
 asn1_parser_error_t asn1_tree_free(asn1_node_t **tree) {
-    if (!tree || !*tree) return -1;
+    if (!tree || !*tree) return ERROR_INVALID_TREE;
 
     asn1_parser_error_t res;
 
@@ -275,20 +279,20 @@ asn1_parser_error_t asn1_tree_free(asn1_node_t **tree) {
 /**************************************************/
 
 asn1_parser_error_t parser_stack_new(parser_stack_t **out) {
-    if (!out) return -1;
+    if (!out) return ERROR_INVALID_ARGS;
 
     // Check if is already allocated
-    if (*out) return -1;
+    if (*out) return ERROR_STACK_ALREADY_ALLOC;
 
     *out = calloc(1, sizeof(parser_stack_t));
-    if (!*out) return -1;
+    if (!*out) return ERROR_ALLOCATION;
 
     // Allocate initial entries
     (*out)->stack_entries = calloc(ASN1_STACK_INIT_ALLOC, sizeof(parser_entry_stack_t *));
     if (!(*out)->stack_entries) {
         free(*out);
         *out = NULL;
-        return -1;
+        return ERROR_ALLOCATION;
     }
 
     (*out)->dim = ASN1_STACK_INIT_ALLOC;
@@ -300,13 +304,13 @@ asn1_parser_error_t parser_stack_new(parser_stack_t **out) {
  * precondition: tlv is already safe. No tlv safety check is performed 
  */
 asn1_parser_error_t parser_entry_stack_new(asn1_node_t *node, tlv_t tlv, parser_entry_stack_t **out) {
-    if (!out || !node) return -1;
+    if (!out || !node) return ERROR_INVALID_ARGS;
 
     // Check is is already allocated
-    if (*out) return -1;
+    if (*out) return ERROR_STACK_ENTRY_ALREADY_ALLOC;
 
     *out = calloc(1, sizeof(parser_entry_stack_t));
-    if (!*out) return -1;
+    if (!*out) return ERROR_ALLOCATION;
 
     (*out)->node = node;
     (*out)->tlv = tlv;
@@ -316,7 +320,7 @@ asn1_parser_error_t parser_entry_stack_new(asn1_node_t *node, tlv_t tlv, parser_
 
 
 asn1_parser_error_t parser_stack_empty(parser_stack_t *stack, uint8_t *out) {
-    if (!stack || !out) return -1; // Aggiunto controllo su out
+    if (!stack || !out) return ERROR_INVALID_ARGS; // Aggiunto controllo su out
 
     *out = (stack->size == 0);
     return PARSER_OK;
@@ -352,13 +356,11 @@ void parser_stack_free(parser_stack_t **stack) {
 }
 
 static asn1_parser_error_t parser_stack_expand(parser_stack_t *stack) {
-    if (!stack) return -1;
-
-    if (!stack->stack_entries) return -1;
+    if (!stack || !stack->stack_entries) return ERROR_INVALID_STACK;
 
     size_t new_dim = stack->dim * 2;
     parser_entry_stack_t **new_ptr = realloc(stack->stack_entries, sizeof(parser_entry_stack_t*) * new_dim);
-    if (!new_ptr) return -1;
+    if (!new_ptr) return ERROR_REALLOC;
 
     stack->stack_entries = new_ptr;
     stack->dim = new_dim;
@@ -368,13 +370,13 @@ static asn1_parser_error_t parser_stack_expand(parser_stack_t *stack) {
 }
 
 asn1_parser_error_t parser_stack_push(parser_stack_t *stack, parser_entry_stack_t *entry){
-    if (!stack || !entry) return -1;
+    if (!stack || !entry) return ERROR_INVALID_ARGS;
 
     // Check if list entries is allocated
-    if (!stack->stack_entries) return -1;
+    if (!stack->stack_entries) return ERROR_STACK_ENTRY_ALREADY_ALLOC;
 
     // Check if we reach the max nesting level
-    if (stack->size >= PARSER_STACK_MAX_SIZE) return -1;
+    if (stack->size >= PARSER_STACK_MAX_SIZE) return ERROR_MAX_NESTING_REACHED;
 
     // Check available space
     asn1_parser_error_t res;
@@ -391,10 +393,7 @@ asn1_parser_error_t parser_stack_push(parser_stack_t *stack, parser_entry_stack_
 }
 
 asn1_parser_error_t parser_stack_pop(parser_stack_t *stack) {
-    if (!stack) return -1;
-
-    // Check if list entries is allocated
-    if (!stack->stack_entries) return -1;
+    if (!stack || !stack->stack_entries) return ERROR_INVALID_STACK;
 
     asn1_parser_error_t res;
 
@@ -403,7 +402,7 @@ asn1_parser_error_t parser_stack_pop(parser_stack_t *stack) {
     if ((res = parser_stack_empty(stack, &empty)) < PARSER_OK)
         return res;
 
-    if (empty) return -1;
+    if (empty) return ERROR_POP_FROM_EMPTY_STACK;
 
     // Free the entry
     parser_stack_free_entry(&stack->stack_entries[stack->size - 1]);
@@ -414,10 +413,10 @@ asn1_parser_error_t parser_stack_pop(parser_stack_t *stack) {
 }
 
 asn1_parser_error_t parser_stack_top(parser_stack_t *stack, parser_entry_stack_t **out) {
-    if (!stack || !out) return -1;
+    if (!stack || !out) return ERROR_INVALID_ARGS;
 
     // Check if list entries is allocated
-    if (!stack->stack_entries) return -1;
+    if (!stack->stack_entries) return ERROR_INVALID_STACK;
 
     asn1_parser_error_t res;
 
@@ -441,13 +440,13 @@ asn1_parser_error_t parser_stack_top(parser_stack_t *stack, parser_entry_stack_t
 /**************************************************/
 
 static asn1_parser_error_t init_primitive_node_from_tlv(asn1_node_t *node, tlv_t tlv, ctx_buffer_t buffer) {
-    if (!node) return -1;
+    if (!node) return ERROR_INVALID_ARGS;
 
-    if (node->data) return -1; // Already allocated
-    if (node->child_nodes) return -1; // Try to init a constructed node to primitive
+    if (node->data) return ERROR_NODE_ALREADY_ALLOC; // Already allocated
+    if (node->child_nodes) return ERROR_TRY_ALLOC_PRIM_NODE; // Try to init a constructed node to primitive
 
     node->data = calloc(tlv.tag_value_len, sizeof(uint8_t));
-    if (!node->data) return -1;
+    if (!node->data) return ERROR_ALLOCATION;
 
     node->data_dim = tlv.tag_value_len;
     memcpy(node->data, buffer.data + tlv.offset_data, tlv.tag_value_len);
@@ -456,36 +455,8 @@ static asn1_parser_error_t init_primitive_node_from_tlv(asn1_node_t *node, tlv_t
 }
 
 asn1_parser_error_t parse(uint8_t *buffer, size_t len, asn1_node_t **out) {
-    // Costruzione primo nodo:
-    // - estrazione TLV
-    // - push stack
-    
-    // Finchè stack pieno:
-    // - Top dallo stack:
-    //   - Se primitive:
-    //     - riempio il nodo con il value
-    //     - Pop stack
-    //     - modifico ret_len del top
-    //       
-    //
-    //   - Se constructed:
-    //     - controllo della ret_len per vedere se ha raggiunto il massimo della dim 
-    //       da size tlv
-    //     - check per vedere se ha allocato child list: nel caso allocare, vuol dire che è stato 
-    //       preso dallo stack per le prima volta.
-    //     - se ret_len == tlv_len: 
-    //       - aggiornamento ret_len del parent
-    //       - pop stack
-    //     - se ret_len < tlv_len:
-    //       - extract tlv da Value in tlv
-    //       - creazione entry stack, creazione nodo asn1; metto nodo e tlv in stack entry.
-    //       - inserisce nei child del nodo attuale, non quello appen creato, il nodo appena creato
-    //       - push sullo stack. Se c'è abbastanza spazio, altrimenti realloc.
-    //
-    //     - else (ret_len > tlv_len): errore
-
-    if (!buffer) return -1;
-    if (!out) return -1;
+    if (!buffer) return ERROR_INVALID_BUFFER;
+    if (!out) return ERROR_INVALID_ARGS;
 
     asn1_parser_error_t res;
 
@@ -495,7 +466,7 @@ asn1_parser_error_t parse(uint8_t *buffer, size_t len, asn1_node_t **out) {
         return res;
 
     // Build stack
-    parser_stack_t *stack;
+    parser_stack_t *stack = NULL;
     if ((res = parser_stack_new(&stack)) < PARSER_OK)
         return res;
 
@@ -506,14 +477,14 @@ asn1_parser_error_t parse(uint8_t *buffer, size_t len, asn1_node_t **out) {
         return res;
     }
     // Build ASN1 node
-    asn1_node_t *root;
+    asn1_node_t *root = NULL;
     if ((res = asn1_node_new(&root, tlv.tag)) < PARSER_OK) {
         parser_stack_free(&stack);
         return res;
     }
 
     // Create first stack entry
-    parser_entry_stack_t *entry;
+    parser_entry_stack_t *entry = NULL;
     if((res = parser_entry_stack_new(root, tlv, &entry)) < PARSER_OK) {
         parser_stack_free(&stack);
         asn1_tree_free(&root);
@@ -538,7 +509,7 @@ asn1_parser_error_t parse(uint8_t *buffer, size_t len, asn1_node_t **out) {
         if (empty) break;
 
         // Top from stack
-        parser_entry_stack_t *top;
+        parser_entry_stack_t *top = NULL;
         if ((res = parser_stack_top(stack, &top)) < PARSER_OK) {
             parser_stack_free(&stack);
             asn1_tree_free(&root);
@@ -583,7 +554,7 @@ asn1_parser_error_t parse(uint8_t *buffer, size_t len, asn1_node_t **out) {
         // If is constructed node
         else {
             // If all childs are parsed
-            if (top->ret_len == tlv.tag_value_len) {
+            if (top->ret_len == top_tlv.tag_value_len) {
                 // Pop from stack
                 if ((res = parser_stack_pop(stack)) < PARSER_OK) {
                     parser_stack_free(&stack);
@@ -604,7 +575,7 @@ asn1_parser_error_t parse(uint8_t *buffer, size_t len, asn1_node_t **out) {
             }
 
             // There are more childs to parse
-            else if (top->ret_len < tlv.tag_value_len) {
+            else if (top->ret_len < top_tlv.tag_value_len) {
                 
                 // Check if child_nodes list is allocated, otherwise allocate.
                 if (!top_node->child_nodes) {
@@ -616,40 +587,147 @@ asn1_parser_error_t parse(uint8_t *buffer, size_t len, asn1_node_t **out) {
                 }
 
                 // Extract next tlv
-                size_t next_offset = tlv.offset_data + top->ret_len;
-                tlv_t tmp_tlv;
-                if ((tlv_read_from_buffer(ctx_buffer, next_offset, &tmp_tlv)) < PARSER_OK) {
+                size_t next_offset = top_tlv.offset_data + top->ret_len;
+                tlv_t next_tlv;
+                if ((tlv_read_from_buffer(ctx_buffer, next_offset, &next_tlv)) < PARSER_OK) {
                     parser_stack_free(&stack);
                     asn1_tree_free(&root);
                     return res;
                 }
 
-                // Build Node, entry stack. then push node in child list parent
-                // push entry in stack.
+                // Build new Node
+                asn1_node_t *next_node = NULL;
+                if ((res = asn1_node_new(&next_node, next_tlv.tag)) < PARSER_OK) {
+                    parser_stack_free(&stack);
+                    asn1_tree_free(&root);
+                    return res;
+                }
 
+                // check if there is enough space
+                if (top_node->size == top_node->dim) {
+                    if ((res = asn1_node_realloc_childs(top_node)) < PARSER_OK) {
+                        asn1_node_free(&next_node);
+
+                        parser_stack_free(&stack);
+                        asn1_tree_free(&root);
+                        return res;
+                    }
+                }
+
+                // Append the node in the parent childs list
+                top_node->child_nodes[top_node->size] = next_node;
+                top_node->size += 1;
+
+                // Create entry for new node and push in stack
+                parser_entry_stack_t *next_entry = NULL;
+                if ((res = parser_entry_stack_new(next_node, next_tlv, &next_entry)) < PARSER_OK) {
+                    parser_stack_free(&stack);
+                    asn1_tree_free(&root);
+                    return res;
+                }
+
+                if ((res = parser_stack_push(stack, next_entry)) < PARSER_OK) {
+                    parser_stack_free_entry(&next_entry);
+                    parser_stack_free(&stack);
+                    asn1_tree_free(&root);
+                    return res;
+                }
 
             }
 
-            // Error
+            // Else error
             else {
-                // Error: somethigs went wrong, FUCK!
+                // Error: somethigs went wrong, idk.
+                parser_stack_free(&stack);
+                asn1_tree_free(&root);
+                return ERROR_OVERFLOW;
             }
-            
-
-
-
         }
-
-
     }
-    
 
+    // Free stack
+    parser_stack_free(&stack);
 
+    *out = root;
+    return PARSER_OK;  
+}
+
+/**************************************************/
+//                 Dump Utils
+/**************************************************/
+
+static asn1_logger_t logger = NULL;
+
+static void set_logger(asn1_logger_t log_cb) {
+    logger = log_cb;
+}
+
+static log(size_t ident, const char *fmt, ...) {
+    if (logger == NULL) return;
+
+    va_list args;              
+    va_start(args, fmt);    
+
+    logger(ident, fmt, args);  
+
+    va_end(args);  
+}
+
+static void ident(size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        printf("  |");
+    }
+}
+
+static void dump_recv(asn1_tree_t tree, size_t tab) {
+
+    log(tab, "ASN1 Node\n");
+    log(tab, "Tag: 0x%x\n", tree->tag);
+
+    if (!IS_CONSTRUCTED_ASN1_TAG(tree->tag)) {
+        log(tab, "Value (len=%d): ",tree->data_dim);
+
+        for (size_t i = 0; i < tree->data_dim; i++) {
+            printf("0x%x ", tree->data[i]);
+        }
+        printf("\n");
+    }
+    else {
+        ident(tab);
+        printf("Children(%d):\n", tree->size);
+        for (size_t i = 0; i < tree->size; i++) {
+            
+            dump_recv(tree->child_nodes[i], tab + 1);
+        }
+    }
+
+}
+
+asn1_parser_error_t dump_asn1_tree(asn1_tree_t tree) {
+    if (!tree) return ERROR_INVALID_ARGS;
+
+    dump_recv(tree, 0);
 }
 
 /*********************************************/
 
 int main() {
+
+    // Classic ASN.1 DER 
+    unsigned char buffer[] = {0x30, 0x23, 0x31, 0x0f, 0x30, 0x0d, 0x06, 0x03, 0x55, 0x04, 0x03,
+                              0x13, 0x06, 0x54, 0x65, 0x73, 0x74, 0x43, 0x4e, 0x31, 0x10, 0x30,
+                              0x0e, 0x06, 0x03, 0x55, 0x04, 0x0a, 0x13, 0x07, 0x54, 0x65, 0x73,
+                              0x74, 0x4f, 0x72, 0x67};
+
+    asn1_tree_t tree;
+    asn1_parser_error_t res = parse(buffer, 37, &tree);
+
+    if (res < PARSER_OK) {
+        printf("Error: 0x%x\n", res);
+        return 1;
+    }
+
+    dump_asn1_tree(tree);
 
 }
 
