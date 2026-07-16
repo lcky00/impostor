@@ -1,246 +1,258 @@
+/* asn1_parser -- An implementation of an ASN.1 DER parser.
+ *
+ * Luca Vinci <luca9vinci at gmail dot com>
+ *
+ * Parser developed with the goal of writing an SMB1 server
+ * for intercepting NTLM hashes.
+ *
+ * The parser is minimal and builds a tree representing the
+ * ASN.1 structure, with raw data that requires decoding.
+ * 
+ * ====================
+ * ASN1 TAG Structure
+ * ====================
+ * 
+ * A tag consists of two parts: the class and the number.
+ * 
+ *       7 6  5  4 3 2 1 0
+ * TAG: |x|x||x||x|x|x|x|x|
+ *      ^---^^-^^---------^
+ *        |   |   |     
+ *      Class | Number
+ *           P/C
+ * 
+ * Class:
+ *  - 00 -> Universal
+ *  - 01 -> Application
+ *  - 10 -> Context-specif
+ *  - 11 -> Private
+ * 
+ * P/C:
+ *  - 0 -> Primitive
+ *  - 1 -> Constructed
+ * 
+ * ====================  
+ * TLV Structure
+ * ====================
+ * 
+ * The transfer syntax used by distinct encoding rules always follows
+ * a Tag-Length-Value format, commonly referred to as a TLV triplet.
+ * 
+ * +-------------------------------+
+ * |   |   +---------------------+ |
+ * |   |   |   |   +-----------+ | |
+ * | T | L | T | L | T | L | V | | |
+ * |   |   |   |   +-----------+ | |  
+ * |   |   +---------------------+ |
+ * +-------------------------------+
+ * 
+ * 
+ * The Length field in a TLV triplet specifies the number of bytes encoded
+ * in the Value field. The Value field contains the actual data transmitted
+ * between computers. 
+ * 
+ * - If the Value field contains fewer than 128 bytes, the Length field
+ *   uses a single byte. Bit 7 of the Length byte is 0, and the remaining
+ *   bits indicate the number of bytes in the Value field.
+ * 
+ * - If the Value field contains 128 bytes or more, bit 7 of the Length
+ *   byte is set to 1, and the remaining bits specify the number of
+ *   bytes used to encode the length itself.
+ * 
+ * Examples are illustrated below:
+ * 
+ * |0|0|1|1|0|1|0|0||x|x|x|x|x|x|x|x|x|x|x|x|x|x|...
+ *  ^ ^-----------^  ^--------------------------^ 
+ *  |  Length = 52           Value -> 52 Bytes
+ *  |    
+ * Bit representation for 0 <= Length <= 127 bytes
+ * 
+ * |1|0|0|0|0|0|1|0||0|0|0|1|0|0|1|1|0|1|0|0|0|1|1|0||x|x|x|x|x|x|x|x|...
+ *  ^ ^-----------^  ^-----------------------------^  ^---------------^
+ *  | Num of length bytes = 2       2 Bytes -> 4934       Value -> 4934 Bytes										
+ *  |    
+ * Bit representation for 128 <= Length <= 2^126 bytes
+ *     
+ */
+
 #ifndef ASN1_PARSER_H
-#define ASN1_PARSER_H
+#define ASN1_PERSER_H
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
 /**************************************************/
-//                    ERRORS
-/*************************************************/
-
-#define PARSER_OK                                       0x00000000
-
-#define PARSER_ERROR_LEN_LEN_BYTES_TOO_BIG              0x80000001
-#define PARSER_ERROR_LEN_LEN_OVERFLOW                   0x80000002
-
-#define PARSER_ERROR_INVALID_BUFFER                     0x80000003
-
-#define PARSER_ERROR_ALLOC_NEW_ASN1_OBJECT              0x80000004
-#define PARSER_ERROR_ALLOC_NEW_ASN1_ENTRY               0x80000005
-#define PARSER_ERROR_ALLOC_NEW_ASN1_ENTRY_VALUE         0x80000006
-
-#define PARSER_ERROR_INVALID_BLOB                       0x80000007
-
-#define PARSER_ERROR_ASN1_ENTRY_VALUE_LEN_TOO_BIG       0x80000008
-
-#define PARSER_ERROR_FREE_ASN1_OBJ_ALLOC                0x80000009
-#define PARSER_ERROR_FREE_ASN1_OBJ_REALLOC              0x8000000a
-
-#define PARSER_ERROR_INVALID_ENTRY                      0x8000000b
-
-#define PARSER_ERROR_APPEND_INVALID_OBJ                 0x8000000c
-#define PARSER_ERROR_APPEND_REALLOC                     0x8000000d
-#define PARSER_ERROR_APPEND_REALLOC_MAX_CHILD_REACHED   0x8000000e
-
-#define PARSER_ERROR_STACK_INVALID_STACK                0x8000000f
-#define PARSER_ERROR_STACK_MAX_DIM_EXCEEDED             0x80000010
-#define PARSER_ERROR_STACK_LEN_DIM_EXCEEDED             0x80000011
-#define PARSER_ERROR_STACK_REALLOC                      0x80000012
-#define PARSER_ERROR_STACK_POP_FROM_EMPTY_STACK         0x80000013
-#define PARSER_ERROR_STACK_TOP_FROM_EMPTY_STACK         0x80000014
-#define PARSER_ERROR_STACK_ALLOCATION                   0x80000015
-#define PARSER_ERROR_STACK_ENTRY_ALLOCATION             0x80000016
-#define PARSER_ERROR_STACK_ENTRY_OBJ_IS_NULL            0x80000017
-#define PARSER_ERROR_STACK_PUSH_ENTRY_IS_NULL           0x80000018
-
-#define PARSER_ERROR_INVALID_TAG                        0x80000019
-
-#define PARSER_ERROR_ASN1_BLOB_LEN_TOO_BIG              0x8000001a
-#define PARSER_ERROR_MAX_ASN1_NUMERIC_SIZE              0x8000001b
-#define PARSER_ERROR_MAX_ASN1_STRING_SIZE               0x8000001c
-#define PARSER_ERROR_MAX_ASN1_OID_SIZE                  0x8000001d
-#define PARSER_ERROR_MAX_ASN1_BOOLEAN_SIZE              0x8000001e          
-#define PARSER_ERROR_MAX_ASN1_NULL_SIZE                 0x8000001f
-#define PARSER_ERROR_MAX_ASN1_EOC_SIZE                  0x80000020
-#define PARSER_ERROR_MAX_ASN1_ENUMERATED_SIZE           0x80000021
-#define PARSER_ERROR_MAX_ASN1_GENERALIZED_TIME_SIZE     0x80000022
-#define PARSER_ERROR_MAX_ASN1_UTC_TIME_SIZE             0x80000023
-#define PARSER_ERROR_MAX_ASN1_CONSTRUCTED_TYPE_SIZE     0x80000024
-
-#define PARSER_ERROR_INVALID_TYPE_INFO_ENTRY            0x80000025
-
-#define PARSER_ERROR_MAX_ASN1_NESTING_DEPTH             0x80000026
-
-#define PARSER_ERROR_INVALID_ARG                        0x80000027
-
-typedef int32_t asn1_parser_error;
-
-/**************************************************/
-//                    TYPES
-/*************************************************/
-// ASN.1 Types and respective Tags
-
-#define ASN1_TYPE_EOC                       0x00
-#define ASN1_TYPE_BOOLEAN                   0x01
-#define ASN1_TYPE_INTEGER                   0x02
-#define ASN1_TYPE_BIT_STRING                0x03
-#define ASN1_TYPE_OCTET_STRING              0x04
-#define ASN1_TYPE_NULL                      0x05
-#define ASN1_TYPE_OBJECT_ID                 0x06
-
-// Strings Types
-#define ASN1_TYPE_OBJECT_DESCRIPTOR         0x07
-#define ASN1_TYPE_REAL                      0x09
-#define ASN1_TYPE_RELATIVE_OID              0x0d
-#define ASN1_TYPE_UTC_TIME                  0x17
-#define ASN1_TYPE_GENERALIZED_TIME          0x18
-#define ASN1_TYPE_ENUMERATED                0x0a
-
-#define ASN1_TYPE_UTF8_STRING               0x0c
-#define ASN1_TYPE_UTF8_NUMERIC_STRING       0x12
-#define ASN1_TYPE_PRINTABLE_STRING          0x13
-#define ASN1_TYPE_T61_STRING                0x14
-#define ASN1_TYPE_VIDEOTEX_STRING           0x15
-#define ASN1_TYPE_IA5_STRING                0x16
-#define ASN1_TYPE_GRAPHIC_STRING            0x19
-#define ASN1_TYPE_VISIBLE_STRING            0x1a
-#define ASN1_TYPE_GENERAL_STRING            0x1b
-#define ASN1_TYPE_UNIVERSAL_STRING          0x1c
-#define ASN1_TYPE_UNICODE_STRING            0x1e
-#define ASN1_TYPE_CHARACTER_STRING          0x3d
-
-// Construct Types
-#define ASN1_TYPE_SEQUENCE                  0x30
-#define ASN1_TYPE_SET                       0x31
-#define ASN1_TYPE_EXTERNAL                  0x28
-#define ASN1_TYPE_EMBEDDED_PDV              0x2b
-
-// GSSAPI Tag
-#define ASN1_TYPE_GSSAPI                    0x60
-
-//Tags NegotiationToken
-#define ASN1_TYPE_SPNEGO_NEGTOKENINIT       0xa0
-#define ASN1_TYPE_SPNEGO_NEGTOKENRESP       0xa1
-
-//Tags NegTokenInit
-#define ASN1_TYPE_SPNEGO_NEGTOKENINIT_MECHTYPES          0xa0
-#define ASN1_TYPE_SPNEGO_NEGTOKENINIT_REQFLAGS           0xa1
-#define ASN1_TYPE_SPNEGO_NEGTOKENINIT_MECHTOKEN          0xa2
-#define ASN1_TYPE_SPNEGO_NEGTOKENINIT_NEG_HINTS          0xa3
-#define ASN1_TYPE_SPNEGO_NEGTOKENINIT_MECHLISTMIC        0xa4
-
-// Tags NegTokenResp
-#define ASN1_TYPE_SPNEGO_NEGTOKENRESP_NEGSTATE           0xa0
-#define ASN1_TYPE_SPNEGO_NEGTOKENRESP_SUPPORTEDMECH      0xa1
-#define ASN1_TYPE_SPNEGO_NEGTOKENRESP_RESPONSETOKEN      0xa2
-#define ASN1_TYPE_SPNEGO_NEGTOKENRESP_MECHLISTMIC        0xa3
-
-typedef uint8_t asn1_type_t;
-
-/**************************************************/
-//                    Struct
+//                Errors
 /**************************************************/
 
-/**
- * Structure for type handling. Includes the associated name, limit, node type
- * (root or leaf) useful for building the tree during parsing, and a possible
- * error in case the limit is exceeded.
- */
-typedef struct types_info {
-    asn1_type_t type;
-    const char *name;
-    size_t max_len;
-    uint8_t flag;
-    asn1_parser_error err;
-} types_info;
+#define PARSER_OK 0x00000000
 
-/* 
- * Possible value of the ASN.1 node in the ASN.1 tree
- * resulting from the parsing.
- */
-typedef struct asn1_entry {
-    size_t len;
-    uint8_t *value;
-} asn1_entry;
+#define ERROR_INVALID_ARGS 0x80000001
+#define ERROR_UNSAFE_LEN 0x80000002
+#define ERROR_ALLOCATION 0x80000003
+#define ERROR_INVALID_BUFFER_DATA 0x80000004
+#define ERROR_PARSER_MAX_NUM_BYTES_FOR_LEN 0x80000005
+#define ERROR_UNSAFE_BUFFER_OFFSET 0x80000006
+#define ERROR_REALLOC 0x80000007
+#define ERROR_DATA_ALREADY_ALLOC 0x80000008
+#define ERROR_NOTHING_TO_REALLOC 0x80000009
 
-/*
- * Node of the ASN.1 tree
- */
-typedef struct asn1_obj {
-    asn1_type_t type;
-    struct asn1_entry *entry;
-    size_t len;
+#define ERROR_INVALID_TREE 0x8000000a
+#define ERROR_STACK_ALREADY_ALLOC 0x8000000b
+#define ERROR_STACK_ENTRY_ALREADY_ALLOC 0x8000000c
+#define ERROR_INVALID_STACK 0x8000000d
+
+#define ERROR_MAX_NESTING_REACHED 0x8000000e
+#define ERROR_POP_FROM_EMPTY_STACK 0x8000000f
+
+#define ERROR_NODE_ALREADY_ALLOC 0x80000010
+#define ERROR_TRY_ALLOC_PRIM_NODE 0x80000020
+#define ERROR_INVALID_BUFFER 0x80000030
+
+#define ERROR_OVERFLOW 0x80000040
+
+
+
+typedef int32_t asn1_parser_error_t;
+
+/**************************************************/
+//                Constants
+/**************************************************/
+
+#define PARSER_MAX_NUM_BYTES_FOR_LEN 8  // 8 bytes
+
+
+/**************************************************/
+//                ASN1 Tree Structs
+/**************************************************/
+
+#define IS_CONSTRUCTED_ASN1_TAG(tag) ((tag & 0x20) != 0)
+
+typedef uint8_t asn1_tag_t;
+
+typedef struct ctx_buffer_t {
     size_t dim;
-    struct asn1_obj **list;
-} asn1_obj;
+    uint8_t *data;
+} ctx_buffer_t;
+
+// Zero-copy
+typedef struct tlv_t {
+    size_t offset_start;
+    asn1_tag_t tag;              // Tag ASN1
+    size_t tag_value_len;        // Length of Value
+    size_t tag_value_len_bytes;  // Num Bytes of Length of Value
+    size_t offset_data;          // Offset of the ctx_buffer
+} tlv_t;
+
+typedef struct asn1_node_t {
+    asn1_tag_t tag;
+
+    // Content if no constructed tag
+    size_t data_dim;
+    uint8_t *data;
+
+    // Childs 
+    size_t dim;
+    size_t size;
+    struct asn1_node_t **child_nodes;
+} asn1_node_t;
+
+typedef asn1_node_t * asn1_tree_t;
 
 /**************************************************/
-//                PARSER UTILS
+//                Stack Structs
 /**************************************************/
 
-asn1_parser_error get_type_info_by_type(asn1_type_t type, const types_info **out);
-asn1_parser_error is_root_node(asn1_type_t type, uint8_t *is_root);
-uint8_t is_valid_type(asn1_type_t type);
-uint8_t is_safe_asn1_length(size_t len, size_t offset, size_t max_len);
-asn1_parser_error check_len_by_type(asn1_type_t type, size_t len);
+typedef struct parser_entry_stack_t {
+    asn1_node_t *node;
 
-/**************************************************/
-//                 PARSER OBJECT 
-/**************************************************/
-
-asn1_entry * new_asn1_entry();
-asn1_obj * new_asn1_obj(asn1_type_t type);
-asn1_parser_error append_asn1_obj_list(asn1_obj **obj, asn1_obj *obj_to_append);
-void free_asn1_entry(asn1_entry **entry);
-asn1_parser_error free_asn1_obj(asn1_obj **obj);
-
-/**************************************************/
-//             PARSING FOR LENGHTS
-/**************************************************/
-
-uint8_t check_long_form(uint8_t b);
-uint8_t extract_len_short_form(uint8_t b);
-asn1_parser_error extract_len_long_form(uint8_t *buffer, uint8_t bytes, uint64_t *out_len);
-asn1_parser_error parse_length(uint8_t *buffer, uint64_t *out_len, uint64_t *num_bytes_len);
-
-/**************************************************/
-//                PARSING TYPES
-/**************************************************/
-
-asn1_parser_error parse_blob(uint8_t type, const uint8_t *blob, size_t len, asn1_entry **entry);
-
-/**************************************************/
-//                STACK UTILS
-/**************************************************/
-
-/**
- * Structure describing an entry for the stack used
- * by the main parser.
- */
-typedef struct parser_stack_entry {
-    asn1_obj *obj;
+    // Stack context
+    tlv_t tlv;
     size_t ret_len;
-    size_t effective_len;  
-    size_t offset;  
-    size_t num_bytes_len;
-} parser_stack_entry;
+
+} parser_entry_stack_t;
+
+typedef struct parser_stack_t {
+    size_t dim;
+    size_t size;
+    parser_entry_stack_t **stack_entries;
+} parser_stack_t;
+
+
+/**************************************************/
+//                Parser Utils
+/**************************************************/
 
 /**
- * Structure for the stack used by the main parser
+ * Returns a new ctx_buffer
  */
-typedef struct parser_stack {
-    size_t dim;
-    size_t len;
-    parser_stack_entry **stack;
-} parser_stack;
+asn1_parser_error_t ctx_buffer_new(uint8_t *data, size_t dim, ctx_buffer_t *out);
 
-parser_stack_entry * new_parser_stack_entry();
-parser_stack * new_parser_stack();
-uint8_t parser_stack_is_empty(parser_stack *stack);
-void free_parser_stack_entry(parser_stack_entry **entry);
-asn1_parser_error free_parser_stack(parser_stack **stack);
-asn1_parser_error parser_stack_realloc(parser_stack *stack);
-asn1_parser_error parser_stack_push(parser_stack *stack, parser_stack_entry *entry);
-asn1_parser_error parser_stack_pop(parser_stack *stack, parser_stack_entry **out);
-asn1_parser_error parser_stack_top(parser_stack *stack, parser_stack_entry **out);
+/**
+ * Function for safe read. It checks offsetand len safety.
+ */
+uint8_t ctx_buffer_is_safe_offset(ctx_buffer_t buffer, size_t offset);
+uint8_t ctx_buffer_is_safe_len(ctx_buffer_t buffer, size_t offset, size_t len);
+
+/**
+ * Reads bytes_to_read from buffer and returns in out
+ */
+asn1_parser_error_t ctx_buffer_read(ctx_buffer_t buffer, size_t start_offset, size_t bytes_to_read, uint8_t **out);
+
+/**
+ * From a buffer retrieve a TLV
+ */
+asn1_parser_error_t tlv_read_from_buffer(ctx_buffer_t buffer, size_t start_offset, tlv_t *tlv_out);
+
+/**
+ * Extract len from a bytes. Checks for short-form or long-form.
+ * Returns num_bytes that encode len and the effective len.
+ */
+asn1_parser_error_t tlv_extract_len(ctx_buffer_t buffer, size_t offset, size_t *num_bytes, uint64_t *len);
+
+/**
+ * Returns in out a pointer to a new asn1 node
+ */
+asn1_parser_error_t asn1_node_new(asn1_node_t **out, asn1_tag_t tag);
+
+asn1_parser_error_t asn1_tree_free(asn1_node_t **tree);
+
 
 /**************************************************/
-//                MAIN PARSER
+//                Stack Utils
 /**************************************************/
 
-asn1_parser_error parse(uint8_t *buffer, size_t len, asn1_obj **obj_out);
+/**
+ * Create new stack , new stack entry and function for check emptiness
+ */
+asn1_parser_error_t parser_stack_new(parser_stack_t **out);
+asn1_parser_error_t parser_entry_stack_new(asn1_node_t *node, tlv_t tlv, parser_entry_stack_t **out);
+asn1_parser_error_t parser_stack_empty(parser_stack_t *stack, uint8_t *out);
 
- 
+/**
+ * Free functions for stack entry and for stack
+ */
+void parser_stack_free_entry(parser_entry_stack_t **entry);
+void parser_stack_free(parser_stack_t **stack);
+
+/**
+ * Utilities for stack
+ */
+asn1_parser_error_t parser_stack_push(parser_stack_t *stack, parser_entry_stack_t *entry);
+asn1_parser_error_t parser_stack_pop(parser_stack_t *stack);
+asn1_parser_error_t parser_stack_top(parser_stack_t *stack, parser_entry_stack_t **out);
 
 
-#endif // ASN1_PARSER_H
+/**************************************************/
+//                Main Parser
+/**************************************************/
+
+typedef void (*asn1_logger_t)(size_t ident, const char *format, va_list args);
+
+asn1_parser_error_t parse(uint8_t *buffer, size_t len, asn1_node_t **out);
+void set_logger(asn1_logger_t log_cb);
+
+asn1_parser_error_t dump_asn1_tree(asn1_tree_t tree);
+
+#endif // ASN1_PERSER_H
