@@ -3,11 +3,13 @@
 
 #include "asn1_parser.h"
 
-#define SPNEGO_OK               0x00000000
-#define SPNEGO_DEC_ERR_INVALID_ASN1_TREE       0x80000001
-#define SPNEGO_DEC_ERR_INVALID_DATA     0x80000002
-#define SPNEGO_DEC_ERR_UNEXPECTED_TAG          0x80000003
-#define SPNEGO_DEC_ERR_ALLOC          0x80000004
+#define SPNEGO_OK                           0x00000000
+#define SPNEGO_DEC_ERR_INVALID_ASN1_TREE    0x80000001
+#define SPNEGO_DEC_ERR_INVALID_OID          0x80000002
+#define SPNEGO_DEC_ERR_UNEXPECTED_TAG       0x80000003
+#define SPNEGO_DEC_ERR_ALLOC                0x80000004
+#define SPNEGO_DEC_ERR_INVALID_ARG          0x80000005
+#define SPNEGO_DEC_ERR_INVALID_ASN1_NODE    0x80000006
 
 typedef int32_t spnego_dec_error_t;
 
@@ -20,6 +22,12 @@ typedef int32_t spnego_dec_error_t;
 #define SPNEGO_INIT_NEGHINTS    0xa3
 #define SPNEGO_INIT_MECHLISTMIC 0xa4
 
+#define SPNEGO_RESP_NEGSTATE        0xa0
+#define SPNEGO_RESP_SUPORTED_MECH   0xa1
+#define SPNEGO_RESP_RESPONSE_TOKEN  0xa2
+#define SPNEGO_RESP_MECH_LIST_MIC   0xa3
+
+
 #define ASN1_SEQUENCE       0x30
 #define ASN1_AID            0x60
 #define ASN1_OID            0x06
@@ -31,10 +39,11 @@ typedef int32_t spnego_dec_error_t;
 #define ASN1_MECH_LIST_MIC  0xa3
 #define ASN1_ENUMERATED     0x0a
 
-const uint8_t spnego_oid[] = {0x2b, 0x06, 0x01, 0x05, 0x05, 0x02};
-const uint8_t ms_krb5_oid[] = {0x2a, 0x86, 0x48, 0x82, 0xf7, 0x12, 0x01, 0x02, 0x02};
-const uint8_t krb5_oid[] = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02, 0x02};
-const uint8_t krb5_utu_oid[] = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02, 0x02, 0x03};
+extern const uint8_t spnego_oid[];
+extern const uint8_t ms_krb5_oid[];
+extern const uint8_t krb5_oid[];
+extern const uint8_t krb5_utu_oid[];
+extern const uint8_t ntlmssp_oid[];
 
 /*
 NegotiationToken ::= CHOICE {
@@ -67,7 +76,7 @@ typedef struct spnego_neg_token_init_t {
     asn1_node_t *mech_types;
 
     // reqFlags: 0xa1
-    uint32_t req_flags;
+    uint8_t req_flags;
 
     // mechToken: 0xa2
     uint8_t *mech_token;
@@ -101,7 +110,8 @@ NegTokenResp ::= SEQUENCE {
 */
 typedef struct spnego_neg_token_resp_t {
     // negState: 0xa0
-    int neg_state;
+    uint8_t *neg_state;
+    size_t neg_state_len;
 
     // supportedMech: 0xa1
     uint8_t *supported_mech;
@@ -127,6 +137,10 @@ typedef struct spnego_neg_token_t {
     
 } spnego_neg_token_t;
 
-spnego_dec_error_t snpego_decode(asn1_tree_t asn1_tree, spnego_neg_token_t **resp);
+spnego_dec_error_t spnego_decode(asn1_tree_t asn1_tree, spnego_neg_token_t **resp);
 spnego_dec_error_t spnego_decode_init(asn1_tree_t asn1_tree, spnego_neg_token_t *resp);
 spnego_dec_error_t spnego_decode_resp(asn1_tree_t asn1_tree, spnego_neg_token_t *resp);
+
+
+
+
