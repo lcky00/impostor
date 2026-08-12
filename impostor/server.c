@@ -136,7 +136,7 @@ int main(int argc, char *argv[]) {
 
     if (argc > 1) {
         port = (size_t)atoi(argv[1]);
-        if (port == 0) {
+        if (port <= 0 || port > 65535) {
             printf("\n[!] Invalid port number\n");
             exit(1);
         }
