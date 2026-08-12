@@ -92,16 +92,7 @@ static void init_client(client_t *c) {
 
 static void init_clients(client_t *clients) {
     for (size_t i = 0; i < MAX_CLIENTS; i++) {
-        clients[i].fd = -1;
-
-        clients[i].status = NEGOTIATE;
-
-        clients[i].netbios_header_recv = 0;
-        clients[i].netbios_msg_len = 0;
-
-        clients[i].rx_len = 0;
-        clients[i].tx_len = 0;
-        clients[i].tx_off = 0;
+        init_client(&clients[i]);
     }
 }
 
@@ -116,7 +107,7 @@ static void client_close(client_t *client) {
 static void start_server(int listen_fd, client_t *clients) {
 
     while(keep_running) {
-        
+
     }
 
 
