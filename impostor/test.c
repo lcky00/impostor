@@ -77,7 +77,7 @@ int main() {
 
     // Parse SPNEGO
     spnego_neg_token_t *resp;
-    snpego_decode(tree, &resp);
+    spnego_decode(tree, &resp);
 
     printf("[+] Parsing NTLM ...\n\n");
 

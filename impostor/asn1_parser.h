@@ -76,7 +76,7 @@
  */
 
 #ifndef ASN1_PARSER_H
-#define ASN1_PERSER_H
+#define ASN1_PARSER_H
 
 #include <stdint.h>
 #include <stdlib.h>

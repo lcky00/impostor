@@ -214,8 +214,6 @@ static void asn1_tree_free_recv(asn1_node_t *node) {
 asn1_parser_error_t asn1_tree_free(asn1_node_t **tree) {
     if (!tree || !*tree) return ERROR_INVALID_TREE;
 
-    asn1_parser_error_t res;
-
     // Initialize auxiliary stack for free the tree
     size_t stack_top = 0;
     size_t stack_dim = 100;
@@ -339,9 +337,8 @@ void parser_stack_free_entry(parser_entry_stack_t **entry) {
 void parser_stack_free(parser_stack_t **stack) {
     if (!stack || !*stack) return;
 
-    size_t dim, size;
+    size_t dim;
     dim = (*stack)->dim;
-    size = (*stack)->size;
     parser_entry_stack_t **s = (*stack)->stack_entries;
 
     // Free stack entries
@@ -700,6 +697,7 @@ asn1_parser_error_t dump_asn1_tree(asn1_tree_t tree) {
     if (!tree) return ERROR_INVALID_ARGS;
 
     dump_recv(tree, 0);
+    return PARSER_OK;
 }
 
 
