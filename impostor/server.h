@@ -8,6 +8,9 @@
 #define BACKLOG 16
 #define MAX_CLIENTS 50
 
+#define VER_MAJOR 1
+#define VER_MINOR 0
+
 typedef enum {
     NEGOTIATE,
     CHALLENGE,
@@ -48,4 +51,4 @@ const char *ascii_art =
 " | || '_ ` _ \\| '_ \\| | | / __| __| | | | '__| \n"
 " | || | | | | | |_) | |_| \\__ \\ |_| |_| | |    \n"
 "|___|_| |_| |_| .__/ \\___/|___/\\__|\\___/|_|    \n"
-"              |_| (v.1.0)             by Lcky  \n\n\n";
+"              |_| (v.%d.%d)             by Lcky  \n\n\n";

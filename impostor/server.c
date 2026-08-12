@@ -14,6 +14,7 @@
 #include <poll.h>
 
 volatile sig_atomic_t keep_running = 1;
+size_t port = SERVER_PORT;
 
 void intHandler(int dummy) {
     keep_running = 0;
@@ -23,11 +24,14 @@ static void print_ascii_art(){
     printf("%s", ascii_art);
 }
 
-static void print_server_info() {
+static void print_server_ver_and_author() {
     printf("[*] Version: 1.0\n");
     printf("[*] Author: Lcky <luca9vinci at gmail dot com>\n\n");
+}
+
+static void print_server_info() {
     printf("[*] Server Info\n");
-    printf("    Port: %d\n", SERVER_PORT);
+    printf("    Port: %ld\n", port);
     printf("    Max Clients: %d\n", MAX_CLIENTS);
     printf("\n\n");
 }
@@ -55,7 +59,7 @@ static void setup_listener(int *listen_fd, struct sockaddr_in *addr) {
 
     addr->sin_family = AF_INET;                // Address family. AF_INET means it's an IPv4 address.
     addr->sin_addr.s_addr = htonl(INADDR_ANY); // INADDR_ANY -> all the IPv4 interfaces.
-    addr->sin_port = htons(SERVER_PORT);
+    addr->sin_port = htons(port);
 
     if (bind(
             *listen_fd,
@@ -74,7 +78,7 @@ static void setup_listener(int *listen_fd, struct sockaddr_in *addr) {
         exit(1);
     }
 
-    printf("[*] Listening on port %d\n", SERVER_PORT);
+    printf("[*] Listening on port %ld\n", port);
     printf("[*] Waiting for connections...\n");
 }
 
@@ -126,8 +130,18 @@ static void start_server(int listen_fd, client_t *clients, struct pollfd *pfds) 
 }
 
 
-int main() {
+int main(int argc, char *argv[]) {
     print_ascii_art();
+    print_server_ver_and_author();
+
+    if (argc > 1) {
+        port = (size_t)atoi(argv[1]);
+        if (port == 0) {
+            printf("\n[!] Invalid port number\n");
+            exit(1);
+        }
+    }
+
     print_server_info();
 
     signal(SIGINT, intHandler);

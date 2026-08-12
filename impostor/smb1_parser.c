@@ -98,7 +98,7 @@ static int ctx_safe_extract_smb_string(ctx_msg_t *ctx_msg, uint8_t **out_string,
                 continue;
             }
 
-            // ripristino vecchio offset ed esco
+            // restoring old offset and quit
             ctx_msg->offset = old_offset - allign;
             return 0;
         }
@@ -108,7 +108,7 @@ static int ctx_safe_extract_smb_string(ctx_msg_t *ctx_msg, uint8_t **out_string,
             return 0;
         }
 
-        // Se è vuota non spreco tempo e spazio
+        // If it's empty, I don't waste time and space.
         if (*out_dim == 2) {
             *out_string = NULL;
             *out_dim = 0;
@@ -583,7 +583,7 @@ static smb_parser_error_t smb_parse_cmd_0x73_res(smb_raw_msg_t raw_msg, smb_pars
     // Parse Data
     ctx_msg.msg = raw_msg.data.bytes;
     ctx_msg.len = raw_msg.data.byte_count;
-    ctx_msg.offset = 0; // Riparte da zero per i Dati
+    ctx_msg.offset = 0; // Starting from scratch with data
     ctx_msg.base_offset = SMB_HEADER_SIZE + 1 + (raw_msg.params.word_count * 2) + 2;
 
     uint16_t len = res->params.security_blob_len;
@@ -692,7 +692,7 @@ static smb_parser_error_t smb_parse_cmd_0x73_req(smb_raw_msg_t raw_msg, smb_pars
     // Parse Data
     ctx_msg.msg = raw_msg.data.bytes;
     ctx_msg.len = raw_msg.data.byte_count;
-    ctx_msg.offset = 0; // Riparte da zero per i Dati
+    ctx_msg.offset = 0; // Starting from scratch with data
     ctx_msg.base_offset = SMB_HEADER_SIZE + 1 + (raw_msg.params.word_count * 2) + 2;
 
     uint16_t len = req->params.security_blob_len;
