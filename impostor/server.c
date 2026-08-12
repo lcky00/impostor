@@ -11,6 +11,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <signal.h>
+#include <poll.h>
 
 volatile sig_atomic_t keep_running = 1;
 
@@ -43,17 +44,17 @@ static void setup_listener(int *listen_fd, struct sockaddr_in *addr) {
 
     // Configurazione del socket.
     setsockopt(*listen_fd,      // Socket
-               SOL_SOCKET,      // Livello dell'opazione che stiamo configurando. Indica che SO_REUSEADDR è un'opzione generica del socket, non specifica di TCP/IP.
-               SO_REUSEADDR,    // Abilita SO_REUSEADDR su listen_fd
-               &yes,            // puntatore al valore da impostare
+               SOL_SOCKET,      // Specifies the configuration level. SO_REUSEADDR is a generic socket option, not specific to TCP or UDP.
+               SO_REUSEADDR,    // Enable SO_REUSEADDR on listen_fd
+               &yes,            // Pointer to the value to set
                sizeof(yes)
     );
     
     // Bind
     memset(addr, 0, sizeof(*addr));
 
-    addr->sin_family = AF_INET;                // Famiglia di indirizzi. AF_INET è per dire un indirizzo IPv4
-    addr->sin_addr.s_addr = htonl(INADDR_ANY); // INADDR_ANY -> tutte le interfacce IPv4 locali.
+    addr->sin_family = AF_INET;                // Address family. AF_INET means it's an IPv4 address.
+    addr->sin_addr.s_addr = htonl(INADDR_ANY); // INADDR_ANY -> all the IPv4 interfaces.
     addr->sin_port = htons(SERVER_PORT);
 
     if (bind(
@@ -104,12 +105,23 @@ static void client_close(client_t *client) {
     init_client(client);
 }
 
-static void start_server(int listen_fd, client_t *clients) {
+static void stop_server(client_t *clients) {
+    printf("\n[*] Stopping the server...");
+
+    // Close all connections
+    for (size_t i = 0; i < MAX_CLIENTS; i++) {
+        client_close(&clients[i]);
+    }
+}
+
+static void start_server(int listen_fd, client_t *clients, struct pollfd *pfds) {
 
     while(keep_running) {
 
     }
 
+    // Free the remaining structures
+    // ...
 
 }
 
@@ -137,10 +149,13 @@ int main() {
     /**
      * START MAIN LOOP
      */
-    start_server(listen_fd, clients);
+    struct pollfd pfds[MAX_CLIENTS + 1];
+    start_server(listen_fd, clients, pfds);
 
-    printf("\n[*] Exiting the server...");
-    close(listen_fd);
-
+    /**
+     * STOPPING THE SERVER
+     */
+    stop_server(clients);
+    
     return 0;
 }

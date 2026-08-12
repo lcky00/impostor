@@ -25,8 +25,7 @@ typedef struct client {
     /*
      * RX:
      *
-     * Dati ricevuti dal socket ma non ancora
-     * completamente processati.
+     * Data received from the socket but not yet fully processed.
      */
     unsigned char rx_buf[RX_SIZE];
     size_t rx_len;
@@ -34,9 +33,7 @@ typedef struct client {
     /*
      * TX:
      *
-     * Dati che vogliamo mandare al client
-     * ma che non sono ancora stati completamente
-     * inviati.
+     * Data intended for the client but not yet fully sent.
      */
     unsigned char tx_buf[TX_SIZE];
     size_t tx_len;
