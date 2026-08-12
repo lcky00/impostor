@@ -21,11 +21,11 @@ void intHandler(int dummy) {
 }
 
 static void print_ascii_art(){
-    printf("%s", ascii_art);
+    printf(ascii_art, VER_MAJOR, VER_MINOR);
 }
 
 static void print_server_ver_and_author() {
-    printf("[*] Version: 1.0\n");
+    printf("[*] Version: %d.%d\n", VER_MAJOR, VER_MINOR);
     printf("[*] Author: Lcky <luca9vinci at gmail dot com>\n\n");
 }
 
