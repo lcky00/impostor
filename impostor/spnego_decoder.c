@@ -7,14 +7,14 @@ const uint8_t krb5_utu_oid[]    = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x0
 const uint8_t ntlmssp_oid[]     = {0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0x37, 0x02, 0x02, 0x0a};
 
 
-int check_spnego_oid(uint8_t *oid, int dim) {
+int check_spnego_oid(uint8_t *oid, size_t dim) {
     if (!oid) return 0;
 
     size_t len = sizeof(spnego_oid);
 
     if (dim != len) return 0;
 
-    for (int i = 0; i < len; i++) {
+    for (size_t i = 0; i < len; i++) {
         if (oid[i] != spnego_oid[i]) return 0;
     }
 
@@ -28,7 +28,7 @@ spnego_dec_error_t spnego_decode(asn1_tree_t asn1_tree, spnego_neg_token_t **res
     // If the first node is the GSSAPI token then skip
     asn1_node_t *spnego_node = NULL;
     if (asn1_tree->tag == ASN1_AID) {
-        for (int i = 0; i < asn1_tree->size; i++) {
+        for (size_t i = 0; i < asn1_tree->size; i++) {
             asn1_node_t *node = asn1_tree->child_nodes[i];
             if (!node) continue;
 
@@ -99,7 +99,7 @@ spnego_dec_error_t spnego_decode_init(asn1_tree_t asn1_tree,
     if (!asn1_tree) return SPNEGO_DEC_ERR_INVALID_ASN1_NODE;
     if (asn1_tree->tag != ASN1_SEQUENCE) return SPNEGO_DEC_ERR_UNEXPECTED_TAG;
     
-    for (int i = 0; i < asn1_tree->size; i++) {
+    for (size_t i = 0; i < asn1_tree->size; i++) {
         asn1_node_t *node = asn1_tree->child_nodes[i];
         if (!node) continue;
 
@@ -150,7 +150,7 @@ spnego_dec_error_t spnego_decode_resp(asn1_tree_t asn1_tree,
     if (!asn1_tree) return SPNEGO_DEC_ERR_INVALID_ASN1_NODE;
     if (asn1_tree->tag != ASN1_SEQUENCE) return SPNEGO_DEC_ERR_UNEXPECTED_TAG;
 
-    for (int i = 0; i < asn1_tree->size; i++) {
+    for (size_t i = 0; i < asn1_tree->size; i++) {
         asn1_node_t *node = asn1_tree->child_nodes[i];
 
         if (!node) continue;

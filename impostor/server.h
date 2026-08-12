@@ -1,7 +1,12 @@
 #include <stdlib.h>
 
+#define SERVER_PORT 9000
+
 #define RX_SIZE 64 * 1024
 #define TX_SIZE 64 * 1024
+
+#define BACKLOG 16
+#define MAX_CLIENTS 50
 
 typedef enum {
     NEGOTIATE,
@@ -38,3 +43,12 @@ typedef struct client {
     size_t tx_off;
 
 } client_t;
+
+
+const char *ascii_art =
+" ___                  ___      _    ___        \n"
+"|_ _|_ __ ___  _ __  / _ \\ ___| |_ / _ \\ _ __  \n"
+" | || '_ ` _ \\| '_ \\| | | / __| __| | | | '__| \n"
+" | || | | | | | |_) | |_| \\__ \\ |_| |_| | |    \n"
+"|___|_| |_| |_| .__/ \\___/|___/\\__|\\___/|_|    \n"
+"              |_| (v.1.0)             by Lcky  \n\n\n";

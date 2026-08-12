@@ -390,7 +390,7 @@ ntlm_parser_error check_msg_type(ntlm_msg_type_t type) {
 
 uint8_t is_vector_empty(uint8_t *v, size_t size) {
     size_t sum = 0;
-    for (int i = 0; i < size; i++)
+    for (size_t i = 0; i < size; i++)
         sum |= v[i];
     
     return sum == 0 ? 0 : 1;
