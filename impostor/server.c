@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <poll.h>
+#include <errno.h>
 
 volatile sig_atomic_t keep_running = 1;
 size_t port = SERVER_PORT;
@@ -79,7 +80,7 @@ static void setup_listener(int *listen_fd, struct sockaddr_in *addr) {
     }
 
     printf("[*] Listening on port %ld\n", port);
-    printf("[*] Waiting for connections...\n");
+    printf("[*] Waiting for connections...\n\n");
 }
 
 static void init_client(client_t *c) {
@@ -110,7 +111,7 @@ static void client_close(client_t *client) {
 }
 
 static void stop_server(client_t *clients) {
-    printf("\n[*] Stopping the server...");
+    printf("\n[*] Stopping the server...\n");
 
     // Close all connections
     for (size_t i = 0; i < MAX_CLIENTS; i++) {
@@ -118,10 +119,126 @@ static void stop_server(client_t *clients) {
     }
 }
 
+static int client_read_rx(client_t *client) {
+    
+}
+
+
 static void start_server(int listen_fd, client_t *clients, struct pollfd *pfds) {
 
     while(keep_running) {
 
+        // Il primo è il listener
+        pfds[0].fd = listen_fd;
+        pfds[0].events = POLLIN;
+        pfds[0].revents = 0;
+
+        for (size_t i = 0; i < MAX_CLIENTS; i++) {
+            pfds[i + 1].fd = clients[i].fd;
+            pfds[i + 1].events = 0;
+            pfds[i + 1].revents = 0;
+
+            if (clients[i].fd == -1) continue;
+
+            pfds[i + 1].events |= POLLIN;
+
+            // Se c'è roba da inviare (quindi TX non vuoto) ci interessa scrivere.
+            if (clients[i].tx_off < clients[i].tx_len) {
+                pfds[i + 1].events |= POLLOUT;
+            }
+        }
+
+        int ret = poll(pfds, MAX_CLIENTS + 1, -1);
+        
+        if (ret < 0) {
+            if (errno == EINTR) continue;
+            perror("[!] Error in poll()");
+            break;
+        }
+
+        /**
+         * Nuove connessioni
+         */
+        if (pfds[0].revents & POLLIN) {
+
+            // Memorizzo info sul client
+            struct sockaddr_in clientaddr;
+            socklen_t clientaddr_size = sizeof(clientaddr);
+
+            int client_fd = accept(listen_fd, (struct sockaddr *)&clientaddr, &clientaddr_size);
+
+            if (client_fd < 0) {
+                perror("[!] Error in accept()");
+            }
+            else {
+                int inserted = 0;
+                for (int i = 0; i < MAX_CLIENTS; i++) {
+                    if (clients[i].fd == -1) {
+                        clients[i].fd = client_fd;
+
+                        // Converte l'IP da binario a stringa
+                        char client_ip[INET_ADDRSTRLEN];
+                        inet_ntop(AF_INET, &(clientaddr.sin_addr), client_ip, INET_ADDRSTRLEN);
+
+                        // Salva IP
+                        strncpy(clients[i].client_ip, client_ip, INET_ADDRSTRLEN);
+                        
+                        printf("[+] New client connected: %s\n", clients[i].client_ip);
+                        inserted = 1;
+                        break;
+                    }
+                }
+
+                if (!inserted) {
+                    printf("[!] New connection refused. Too many clients.\n");
+                    close(client_fd);
+                }
+            }
+        }
+
+        /**
+         * Gestione client
+         */
+        for (size_t i = 0; i < MAX_CLIENTS; i++) {
+            client_t *client = &clients[i];
+
+            if (client->fd == -1) {
+                //printf("BBB\n");
+                continue;
+            }
+
+            short events = pfds[i + 1].revents;
+            printf("AAAAAA\n");
+            
+            sleep(1);
+
+            if (events & (POLLERR |
+                          POLLHUP |
+                          POLLNVAL)) {
+
+                printf("[-] Client disconnected: %s\n", client->client_ip);
+
+                client_close(client);
+                continue;
+            }
+
+            /**
+             * Gestione ricezione
+             */
+            if (events & POLLIN) {
+
+
+            }
+
+            /**
+             * Gestione invio
+             */
+            if (client->fd != -1 && (events & POLLOUT)) {
+
+
+            }
+
+        }
     }
 
     // Free the remaining structures

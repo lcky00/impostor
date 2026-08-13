@@ -19,6 +19,8 @@ typedef enum {
 
 typedef struct client {
     int fd;
+
+    char client_ip[16];
     
     client_status_t status;
 
