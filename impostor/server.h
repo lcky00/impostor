@@ -5,6 +5,8 @@
 #define RX_SIZE 64 * 1024
 #define TX_SIZE 64 * 1024
 
+#define NETBIOS_HEADER 4
+
 #define BACKLOG 16
 #define MAX_CLIENTS 50
 

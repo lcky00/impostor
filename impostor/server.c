@@ -13,6 +13,7 @@
 #include <signal.h>
 #include <poll.h>
 #include <errno.h>
+#include <arpa/inet.h>
 
 volatile sig_atomic_t keep_running = 1;
 size_t port = SERVER_PORT;
@@ -120,7 +121,157 @@ static void stop_server(client_t *clients) {
 }
 
 static int client_read_rx(client_t *client) {
-    
+    size_t available = RX_SIZE - client->rx_len;
+
+    if (available == 0) {
+        printf("[!] Error: RX buffer full. Dropping connection for %s.\n", client->client_ip);
+        return -1;
+    }
+
+    ssize_t n = recv(client->fd, client->rx_buf + client->rx_len, available, 0);
+
+    if (n > 0) {
+        client->rx_len += (size_t)n;
+        //printf("[*] Client sent %d bytes: %s\n", n, client->client_ip);
+        return 0;
+    }
+
+    if (n == 0) {
+        // Il client ha chiuso la connessione.
+        printf("[-] Client disconnected: %s\n", client->client_ip);
+        return -1;
+    }
+
+    if (errno == EINTR) {
+        return 0;
+    }
+
+    if (errno == EAGAIN ||
+        errno == EWOULDBLOCK) {
+        // Nessun dato disponibile.
+        return 0;
+    }
+
+    printf("[-] Client disconnected: %s\n", client->client_ip);
+    return -1;
+}
+
+static int client_process_smb_msg(client_t *client) {
+    smb_raw_msg_t raw;
+    smb_parsed_msg_t parsed;
+
+    int ret = 1;
+
+    // Parsiamo messaggio
+    smb_parser_error_t err = smb_parse_msg(client->rx_buf, client->rx_len, &raw);
+    if (err != SMB_PARSER_OK) {
+        // malformed packet, wrong signature ecc
+        return -1;
+    }
+
+    // Parsiamo comando
+    err = smb_parse_cmd(raw, &parsed);
+    if (err != SMB_PARSER_OK) {
+        // unsupported command, etc.
+        ret = -1;
+        goto cleanup_1;       
+    }
+
+    // In base allo stato del client processiamo il messaggio
+    // - ogni stato deve inviare la risposta e aggiornare stato
+    switch (client->status) {
+        case NEGOTIATE: {
+            if (parsed.header.command != SMB_COM_NEGOTIATE 
+                || !(parsed.header.flags & SMB_FLAGS_REPLY)) {
+                ret = -1;
+                goto cleanup_2;
+            }
+
+            /* code */
+
+            client->status = CHALLENGE;
+            break;
+        }
+
+        case CHALLENGE:{
+            /* code */
+
+            client->status = AUTH;
+            break;
+        }
+
+        case AUTH: {
+            /* code */
+
+            client->status = NEGOTIATE;
+            break;
+        }
+        
+        default: {
+            ret = -1;
+            goto cleanup_2;
+        }
+    }
+    //printf("%x\n", parsed.header.command);
+    //sleep(3);
+cleanup_2:
+    free_smb_cmd_msg(&parsed);
+cleanup_1:
+    free_smb_raw_msg(&raw);
+    return ret;
+}
+
+static int client_process_rx(client_t *client) {
+    // Vediamo se netbios è settato
+    // Se è settato, allora vediamo se è arrivato tutto il messaggio
+    // - se è arrivato processiamolo, dopo resettiamo flag del netbios per il rpssimo messaggio
+    // - altrimenti continue
+    if (client->netbios_header_recv) {
+        
+        if (client->rx_len >= client->netbios_msg_len) {
+
+            // Parsiamo messaggio
+            if (client_process_smb_msg(client) < 0) {
+                printf("[!] The server has closed the connection with: %s\n", client->client_ip);
+                return -1;
+            }
+
+            // Resettiamo flag netbios
+            client->netbios_header_recv = 0;
+            client->netbios_msg_len = 0;
+
+            return 1;
+            
+        }
+        else {
+            // Non abbiamo ancora tutto il messaggio
+            return 0;
+        }
+
+    }
+
+    // Se non è settato vediamo se abbiamo alemeno 4 byte nel buffer
+    // - se non ha 4 byte allora continue
+    // - se li ha allora leggiamoli e settiamo il flag e la lunghezza e contininiuamo
+    else {
+
+        if (client->rx_len >= NETBIOS_HEADER) {
+            client->netbios_header_recv = 1;
+            client->netbios_msg_len = (size_t)(((uint32_t)(client->rx_buf[1])) << 16
+                                    | ((uint32_t)(client->rx_buf[2])) << 8
+                                    | (uint32_t)(client->rx_buf[3]));
+            
+            size_t remaining = client->rx_len - NETBIOS_HEADER;
+            memmove(client->rx_buf, client->rx_buf + NETBIOS_HEADER, remaining);
+            client->rx_len = remaining;
+
+            return 0;
+        }
+        else {
+            // Non abbiamo ancora i 4 byte
+            return 0;
+        }
+    }
 }
 
 
@@ -203,21 +354,16 @@ static void start_server(int listen_fd, client_t *clients, struct pollfd *pfds) 
             client_t *client = &clients[i];
 
             if (client->fd == -1) {
-                //printf("BBB\n");
                 continue;
             }
 
             short events = pfds[i + 1].revents;
-            printf("AAAAAA\n");
             
-            sleep(1);
-
             if (events & (POLLERR |
                           POLLHUP |
                           POLLNVAL)) {
 
                 printf("[-] Client disconnected: %s\n", client->client_ip);
-
                 client_close(client);
                 continue;
             }
@@ -226,8 +372,25 @@ static void start_server(int listen_fd, client_t *clients, struct pollfd *pfds) 
              * Gestione ricezione
              */
             if (events & POLLIN) {
+                if (client_read_rx(client) < 0) {
+                    client_close(client);
+                    continue;
+                }
 
+                // Processiamo quello che abbiamo ricevuto
+                while (client->rx_len > 0) {
+                    size_t before = client->rx_len;
 
+                    if (client_process_rx(client) < 0) {
+                        client_close(client);
+                        break;
+                    }
+                    
+                    // Non c'è un messaggio completo
+                    if (client->rx_len == before) {
+                        break;
+                    }
+                }
             }
 
             /**
