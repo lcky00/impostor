@@ -1,78 +1,78 @@
 # Impostor
 
-Server SMB1 per l'intercettazione di Hash NTLMv2, scritto in C.
+SMB1 server for intercepting NTLMv2 Hashes, written in C.
 
-L'obiettivo del progetto è implementare un server SMB1 come macchina a stati che accetti e risponda correttamente alle richieste del client per ingannarlo, portandolo a completare un'autenticazione NTLM e a rivelare così il proprio hash NTLMv2 (nel formato compatibile con `hashcat`/`john`).
+The goal of the project is to implement an SMB1 server as a state machine that correctly accepts and responds to client requests in order to deceive it, leading it to complete an NTLM authentication and thus reveal its own NTLMv2 hash (in a format compatible with `hashcat`/`john`).
 
-> Strumento pensato per attività di sicurezza offensiva/red teaming e per scopi didattici (studio del protocollo SMB1/NTLM), da usare esclusivamente in ambienti autorizzati e di propria proprietà o con consenso esplicito.
+> Tool intended for offensive security/red teaming activities and for educational purposes (studying the SMB1/NTLM protocol), to be used exclusively in authorized environments that you own or with explicit consent.
 
-## Come funziona
+## How it works
 
-Il server si finge un server SMB1 legittimo e guida il client lungo una macchina a stati a 3 fasi:
+The server pretends to be a legitimate SMB1 server and guides the client through a 3-phase state machine:
 
-![Schema per macchina a stati](docs/schema.png)
+![State machine schema](docs/schema.png)
 
-| Stato | Transizione |
-|-------|-------------|
-| 1. `NEGOTIATE` | Se arriva un `SMB NEGOTIATE`, in seguito alla risposta del server lo stato passa a `2. CHALLENGE` |
-| 2. `CHALLENGE` | Se arriva un `NTLM_NEGOTIATE`, in seguito alla risposta del server lo stato passa a `3. AUTH` |
-| 3. `AUTH` | Se arriva un `NTLM_AUTH`, in seguito alla risposta del server lo stato torna a `1. NEGOTIATE` |
+| State | Transition |
+|-------|-----------|
+| 1. `NEGOTIATE` | If an `SMB NEGOTIATE` arrives, following the server's response the state moves to `2. CHALLENGE` |
+| 2. `CHALLENGE` | If an `NTLM_NEGOTIATE` arrives, following the server's response the state moves to `3. AUTH` |
+| 3. `AUTH` | If an `NTLM_AUTH` arrives, following the server's response the state returns to `1. NEGOTIATE` |
 
-A livello implementativo va tenuta in considerazione la "busta" esterna NetBIOS, composta da 4 byte, i cui ultimi 3 indicano la lunghezza in byte del pacchetto SMB.
+At the implementation level, the outer NetBIOS "envelope" must be taken into account, consisting of 4 bytes, the last 3 of which indicate the length in bytes of the SMB packet.
 
-Ogni connessione client è tracciata tramite una struttura di stato (`client_t` in `server.h`) che, oltre allo stato della macchina a stati, mantiene:
+Each client connection is tracked via a state structure (`client_t` in `server.h`) which, in addition to the state machine's status, maintains:
 
-- un buffer di ricezione (`rx_buf`) con relativa lunghezza per bufferizzare i dati letti dalla socket ma non ancora completamente processati;
-- un buffer di invio (`tx_buf`, con offset `tx_off`) per bufferizzare i dati da inviare al client ma non ancora completamente trasmessi;
-- i campi `netbios_header_recv` e `netbios_msg_len` per il tracking dell'header NetBIOS.
+- a receive buffer (`rx_buf`) with its length, to buffer data read from the socket but not yet fully processed;
+- a send buffer (`tx_buf`, with offset `tx_off`) to buffer data to be sent to the client but not yet fully transmitted;
+- the `netbios_header_recv` and `netbios_msg_len` fields for tracking the NetBIOS header.
 
-Alla ricezione di dati si verifica che almeno **4 byte** (header NetBIOS) siano stati ricevuti, si determina la lunghezza del messaggio SMB, si aggiornano i campi di stato e infine si processa il messaggio, aggiornando lo stato del client per la ricezione successiva.
+Upon receiving data, it is checked that at least **4 bytes** (NetBIOS header) have been received, the length of the SMB message is determined, the state fields are updated, and finally the message is processed, updating the client's state for the next reception.
 
-Il ciclo principale del server si basa su `poll()` per gestire più connessioni contemporaneamente in modo non bloccante:
+The server's main loop is based on `poll()` to handle multiple connections simultaneously in a non-blocking way:
 
-![Main Loop idea per ricezione](docs/main_loop.png)
+![Main Loop idea for reception](docs/main_loop.png)
 
-Quando l'autenticazione NTLM viene completata, il server stampa a video (`[INTERCEPTED] ...`) username, hostname, dominio e l'hash NTLMv2 catturato, nel formato:
+When NTLM authentication is completed, the server prints to screen (`[INTERCEPTED] ...`) the username, hostname, domain, and the captured NTLMv2 hash, in the format:
 
 ```
 username::domain:server_challenge:ntlmv2_response:blob
 ```
 
-pronto per essere usato con strumenti di cracking come `hashcat` (modalità `-m 5600`) o `john`.
+ready to be used with cracking tools such as `hashcat` (mode `-m 5600`) or `john`.
 
-## Struttura del progetto
+## Project structure
 
-| File | Descrizione |
+| File | Description |
 |------|-------------|
-| `server.c` / `server.h` | Entry point, setup del listener TCP, macchina a stati per client, ciclo principale basato su `poll()`, buffering RX/TX, stampa degli hash intercettati |
-| `smb1_parser.c` / `smb1_parser.h` | Parsing/costruzione dei pacchetti SMB1 (header, comandi `NEGOTIATE`, `SESSION_SETUP`, flag/flag2, ecc.) |
-| `spnego_decoder.c` / `spnego_decoder.h` | Decodifica del token SPNEGO (negoziazione del meccanismo di autenticazione, estrazione del blob NTLMSSP) contenuto nei messaggi SMB |
-| `asn1_parser.c` / `asn1_parser.h` | Parser ASN.1 DER minimale, usato dallo SPNEGO decoder per costruire l'albero della struttura ASN.1 |
-| `ntlm_parser.c` / `ntlm_parser.h` | Parsing dei messaggi NTLMSSP (`NEGOTIATE`, `CHALLENGE`, `AUTHENTICATE`) ed estrazione di username, dominio, hostname e risposta NTLMv2 |
-| `endianness.h` | Utility per la gestione dell'endianness (conversioni little/big endian a runtime) |
-| `test.c`, `test2.c` | File di test/sperimentazione per i parser |
-| `docs/` | Diagrammi e materiale di supporto (schema della macchina a stati, main loop) |
+| `server.c` / `server.h` | Entry point, TCP listener setup, client state machine, main loop based on `poll()`, RX/TX buffering, printing of intercepted hashes |
+| `smb1_parser.c` / `smb1_parser.h` | Parsing/building of SMB1 packets (header, `NEGOTIATE`, `SESSION_SETUP` commands, flags/flags2, etc.) |
+| `spnego_decoder.c` / `spnego_decoder.h` | Decoding of the SPNEGO token (negotiation of the authentication mechanism, extraction of the NTLMSSP blob) contained in SMB messages |
+| `asn1_parser.c` / `asn1_parser.h` | Minimal ASN.1 DER parser, used by the SPNEGO decoder to build the ASN.1 structure tree |
+| `ntlm_parser.c` / `ntlm_parser.h` | Parsing of NTLMSSP messages (`NEGOTIATE`, `CHALLENGE`, `AUTHENTICATE`) and extraction of username, domain, hostname, and NTLMv2 response |
+| `endianness.h` | Utility for handling endianness (little/big endian conversions at runtime) |
+| `test.c`, `test2.c` | Test/experimentation files for the parsers |
+| `docs/` | Diagrams and supporting material (state machine schema, main loop) |
 
-## Requisiti
+## Requirements
 
-- Compilatore C compatibile con lo standard usato dal progetto (es. `gcc`/`clang`) e toolchain POSIX (il codice utilizza socket BSD, `poll()`, `signal()`, ecc., quindi è pensato per ambienti Linux/Unix-like).
+- A C compiler compatible with the standard used by the project (e.g. `gcc`/`clang`) and a POSIX toolchain (the code uses BSD sockets, `poll()`, `signal()`, etc., so it is intended for Linux/Unix-like environments).
 
 
-## Compilazione
+## Compilation
 
 ```sh
 gcc -o impostor server.c smb1_parser.c spnego_decoder.c asn1_parser.c ntlm_parser.c
 ```
 
-## Utilizzo
+## Usage
 
 ```sh
-./impostor [porta]
+./impostor [port]
 ```
 
-- `porta` (opzionale): porta TCP su cui il server si mette in ascolto. Se omessa, viene usata la porta di default definita in `server.h` (`SERVER_PORT`, 9000). Deve essere un valore compreso tra 1 e 65535.
+- `port` (optional): TCP port on which the server listens. If omitted, the default port defined in `server.h` (`SERVER_PORT`, 9000) is used. It must be a value between 1 and 65535.
 
-All'avvio il server stampa banner, versione e informazioni di configurazione (porta, numero massimo di client), poi resta in ascolto delle connessioni. Alla cattura di un hash NTLMv2, i dati intercettati (username, hostname, dominio, hash) vengono stampati a schermo. Il server può essere arrestato con `Ctrl+C` (`SIGINT`), gestito da `intHandler`.
+On startup, the server prints a banner, version, and configuration information (port, maximum number of clients), then remains listening for connections. When an NTLMv2 hash is captured, the intercepted data (username, hostname, domain, hash) is printed to the screen. The server can be stopped with `Ctrl+C` (`SIGINT`), handled by `intHandler`.
 
 ```
  ___                  ___      _    ___        
@@ -101,4 +101,3 @@ All'avvio il server stampa banner, versione e informazioni di configurazione (po
 ^C
 [*] Stopping the server...
 ```
-
