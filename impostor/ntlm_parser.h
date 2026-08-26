@@ -351,6 +351,6 @@ void set_ntlm_logger(ntlm_logger_t logger_cb);
 void ntlm_log(const char *format, ...);
 ntlm_parser_error dump_msg(ntlm_msg_t *msg);
 ntlm_parser_error dump_av_pairs(av_pair_t **av_pairs, size_t size);
-ntlm_parser_error dump_utf16_le_string(const uint8_t *data, size_t len);
+ntlm_parser_error dump_utf16_le_string(const uint8_t *data, size_t len, int new_line);
 
 #endif // NTLM_PARSER_H

@@ -958,7 +958,7 @@ void ntlm_log(const char *format, ...) {
     va_end(args);               // libera le risorse di va_list
 }
 
-ntlm_parser_error dump_utf16_le_string(const uint8_t *data, size_t len) {
+ntlm_parser_error dump_utf16_le_string(const uint8_t *data, size_t len, int new_line) {
     if (!data || len == 0) return NTLM_PARSER_ERROR_INVALID_ARGS;
 
     // Prepariamo iconv
@@ -988,7 +988,10 @@ ntlm_parser_error dump_utf16_le_string(const uint8_t *data, size_t len) {
 
     // Stampiamo la stringa convertita
     *outptr = '\0';  // terminatore
-    ntlm_log("%s\n", outbuf);
+    if (new_line)
+        ntlm_log("%s\n", outbuf);
+    else
+        ntlm_log("%s", outbuf);
 
     free(outbuf);
     iconv_close(cd);
@@ -1030,7 +1033,7 @@ ntlm_parser_error dump_av_pairs(av_pair_t **av_pairs, size_t size) {
         }
         
         else {
-            res = dump_utf16_le_string(av_pairs[i]->value, av_pairs[i]->av_len);
+            res = dump_utf16_le_string(av_pairs[i]->value, av_pairs[i]->av_len, 1);
             if (res < NTLM_PARSER_OK) return res;
 
         }
@@ -1052,9 +1055,9 @@ ntlm_parser_error dump_msg(ntlm_msg_t *msg) {
             dump_header_field("DomainName", &msg->header.msg_header.ntlm_negotiate_msg_header.domain_name_fields);
             dump_header_field("Workstation", &msg->header.msg_header.ntlm_negotiate_msg_header.workstation_fields);
             dump_utf16_le_string(msg->payload.ntlm_negotiate_msg_payload.domain_name.data,
-                                 msg->payload.ntlm_negotiate_msg_payload.domain_name.len);
+                                 msg->payload.ntlm_negotiate_msg_payload.domain_name.len, 1);
             dump_utf16_le_string(msg->payload.ntlm_negotiate_msg_payload.workstation_name.data,
-                                 msg->payload.ntlm_negotiate_msg_payload.workstation_name.len);
+                                 msg->payload.ntlm_negotiate_msg_payload.workstation_name.len, 1);
             break;
 
         case CHALLENGE_MESSAGE:
@@ -1092,13 +1095,13 @@ ntlm_parser_error dump_msg(ntlm_msg_t *msg) {
             }
 
             ntlm_log("DomainName: ");
-            dump_utf16_le_string(msg->payload.ntlm_authenticate_msg_payload.domain_name.data, msg->payload.ntlm_authenticate_msg_payload.domain_name.len);
+            dump_utf16_le_string(msg->payload.ntlm_authenticate_msg_payload.domain_name.data, msg->payload.ntlm_authenticate_msg_payload.domain_name.len, 1);
 
             ntlm_log("UserName: ");
-            dump_utf16_le_string(msg->payload.ntlm_authenticate_msg_payload.username.data, msg->payload.ntlm_authenticate_msg_payload.username.len);
+            dump_utf16_le_string(msg->payload.ntlm_authenticate_msg_payload.username.data, msg->payload.ntlm_authenticate_msg_payload.username.len, 1);
 
             ntlm_log("Workstation: ");
-            dump_utf16_le_string(msg->payload.ntlm_authenticate_msg_payload.workstation_name.data, msg->payload.ntlm_authenticate_msg_payload.workstation_name.len);
+            dump_utf16_le_string(msg->payload.ntlm_authenticate_msg_payload.workstation_name.data, msg->payload.ntlm_authenticate_msg_payload.workstation_name.len, 1);
 
             break;
 
