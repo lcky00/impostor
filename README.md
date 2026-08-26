@@ -60,6 +60,17 @@ ready to be used with cracking tools such as `hashcat` (mode `-m 5600`) or `john
 
 ## Compilation
 
+A `Makefile` is included:
+
+```sh
+make            # build the main server -> ./impostor
+make debug      # debug build (symbols, -O0, AddressSanitizer/UBSan)
+make clean      # remove generated object files and executables
+make run        # build and run the server
+```
+
+Alternatively, an equivalent manual compilation command is:
+
 ```sh
 gcc -o impostor server.c smb1_parser.c spnego_decoder.c asn1_parser.c ntlm_parser.c
 ```
