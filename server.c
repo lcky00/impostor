@@ -600,7 +600,13 @@ static int client_process_smb_msg(client_t *client) {
                 ntlm_msg.payload.ntlm_authenticate_msg_payload.domain_name.len, 1
             );
 
-            printf("[INTERCEPTED] Hash    : ");
+            if (ntlm_msg.payload.ntlm_authenticate_msg_payload.ntlm_response_type == NTLM_RESPONSE_V2) {
+                printf("[INTERCEPTED] Hash(v2): ");
+            }
+            else {
+                printf("[INTERCEPTED] Hash(v1): ");
+            }
+
             dump_utf16_le_string(
                 ntlm_msg.payload.ntlm_authenticate_msg_payload.username.data,
                 ntlm_msg.payload.ntlm_authenticate_msg_payload.username.len, 0
@@ -618,34 +624,44 @@ static int client_process_smb_msg(client_t *client) {
                 printf("%02x", challenge[i]);
             }
             printf(":");
+
+            if (ntlm_msg.payload.ntlm_authenticate_msg_payload.ntlm_response_type == NTLM_RESPONSE_V2) {
             
-            ntlm_v2_response_t resp;
-            ntlm_parser_error err;
-            err = ntlm_v2_response_payload_parse(
-                &ntlm_msg.payload.ntlm_authenticate_msg_payload.nt_challenge_response,
-                &resp
-            );
+                ntlm_v2_response_t resp;
+                ntlm_parser_error err;
+                err = ntlm_v2_response_payload_parse(
+                    &ntlm_msg.payload.ntlm_authenticate_msg_payload.nt_challenge_response,
+                    &resp
+                );
 
-            if (err != NTLM_PARSER_OK) {
-                free_ntlm_msg(&ntlm_msg);
-                free(spnego_token);
-                asn1_tree_free(&tree);
-                ret = -1;
-                goto cleanup_2; 
+                if (err != NTLM_PARSER_OK) {
+                    free_ntlm_msg(&ntlm_msg);
+                    free(spnego_token);
+                    asn1_tree_free(&tree);
+                    ret = -1;
+                    goto cleanup_2; 
+                }
+
+                for (size_t i = 0; i < sizeof(resp.response); i++) {
+                    printf("%02x", resp.response[i]);
+                }
+                printf(":");
+
+
+                size_t len = ntlm_msg.payload.ntlm_authenticate_msg_payload.nt_challenge_response.len - sizeof(resp.response);
+                for (size_t i = 0; i < len; i++) {
+                    printf("%02X", ntlm_msg.payload.ntlm_authenticate_msg_payload.nt_challenge_response.data[16 + i]);
+                }
+
+                printf("\n");
             }
 
-            for (size_t i = 0; i < sizeof(resp.response); i++) {
-                printf("%02x", resp.response[i]);
+            else {
+                for (size_t i = 0; i < LM_RESPONSE_SIZE; i++) {
+                    printf("%02x", ntlm_msg.payload.ntlm_authenticate_msg_payload.nt_challenge_response.data[i]);
+                }
+                printf("\n");
             }
-            printf(":");
-
-
-            size_t len = ntlm_msg.payload.ntlm_authenticate_msg_payload.nt_challenge_response.len - sizeof(resp.response);
-            for (size_t i = 0; i < len; i++) {
-                printf("%02X", ntlm_msg.payload.ntlm_authenticate_msg_payload.nt_challenge_response.data[16 + i]);
-            }
-
-            printf("\n");
 
             uint8_t new_resp[sizeof(sessions_setup_auth_tmpl)];
             memcpy(new_resp, sessions_setup_auth_tmpl, sizeof(sessions_setup_auth_tmpl));

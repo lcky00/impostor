@@ -2,7 +2,7 @@ CC      ?= gcc
 CFLAGS  ?= -std=c11 -Wall -Wextra -O2
 LDFLAGS ?=
 
-TARGET      := impostor
+TARGET       := impostor
 TEST_TARGET  := test_parser
 TEST2_TARGET := test_server_standalone
 
